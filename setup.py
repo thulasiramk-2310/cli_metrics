@@ -32,6 +32,8 @@ setup(
     install_requires=[
         "psutil>=5.9.0",
         "rich>=13.0.0",
+        "requests>=2.31.0",
+        "websocket-client>=1.7.0",
     ],
     entry_points={
         "console_scripts": [
