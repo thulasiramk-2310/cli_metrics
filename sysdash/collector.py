@@ -8,10 +8,16 @@ import psutil
 import json
 import time
 import socket
-import requests
 from datetime import datetime
 from typing import Dict, List, Optional
 import logging
+
+# Optional dependency for backend integration
+try:
+    import requests
+    HAS_REQUESTS = True
+except ImportError:
+    HAS_REQUESTS = False
 
 # Configure logging
 logging.basicConfig(
@@ -248,7 +254,7 @@ class MetricsCollector:
 
 
 class MetricsSender:
-    """Sends collected metrics to Go backend"""
+    """Sends collected metrics to Go backend (requires 'requests' library)"""
     
     def __init__(self, backend_url: str = "http://localhost:8080", timeout: int = 5):
         """
@@ -258,6 +264,8 @@ class MetricsSender:
             backend_url: URL of the Go backend server
             timeout: HTTP request timeout in seconds
         """
+        if not HAS_REQUESTS:
+            raise ImportError("requests library is required for MetricsSender. Install with: pip install requests")
         self.backend_url = backend_url.rstrip('/')
         self.metrics_endpoint = f"{self.backend_url}/api/metrics"
         self.timeout = timeout

@@ -1,5 +1,7 @@
-# Python Dependencies
+# Core Dependencies (Required)
 psutil>=5.9.0
-requests>=2.31.0
 rich>=13.7.0
-websocket-client>=1.7.0
+
+# Optional Dependencies (for backend integration)
+# requests>=2.31.0
+# websocket-client>=1.7.0
