@@ -47,22 +47,25 @@ class MiniDashboard:
         
         self.clear_screen()
         
-        # Header
+        # Header - System uptime like Task Manager
         import psutil
         boot_time = psutil.boot_time()
         system_uptime = int(time.time() - boot_time)
-        sys_hours = system_uptime // 3600
-        sys_minutes = (system_uptime % 3600) // 60
         
-        # CPU time
-        cpu_times = psutil.cpu_times()
-        total_cpu_time = cpu_times.user + cpu_times.system
-        cpu_hours = int(total_cpu_time // 3600)
-        cpu_minutes = int((total_cpu_time % 3600) // 60)
+        days = system_uptime // 86400
+        hours = (system_uptime % 86400) // 3600
+        minutes = (system_uptime % 3600) // 60
+        seconds = system_uptime % 60
+        
+        # Format like Task Manager
+        if days > 0:
+            uptime_str = f"{days}:{hours:02d}:{minutes:02d}:{seconds:02d}"
+        else:
+            uptime_str = f"{hours}:{minutes:02d}:{seconds:02d}"
         
         print("=" * 80)
         print(f"  SYSDASH CLI MINI | {self.collector.hostname} | "
-              f"System: {sys_hours}h {sys_minutes}m | CPU Time: {cpu_hours}h {cpu_minutes}m")
+              f"Up time: {uptime_str}")
         print("=" * 80)
         print()
         
