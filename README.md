@@ -9,19 +9,20 @@ Real-time terminal-based system monitoring with beautiful graphs and customizabl
 pip install git+https://github.com/thulasiramk-2310/cli_metrics.git
 ```
 
-### Option 2: Run with Docker
+### Option 2: Run with Docker (Linux only)
 ```bash
 # Pull from Docker Hub
 docker pull ram231006/sysdash:latest
 
-# Run the graphical dashboard
-docker run -it --rm ram231006/sysdash:latest
+# Run on Linux with host system access (requires sudo for some metrics)
+sudo docker run -it --rm --pid=host --net=host ram231006/sysdash:latest
 
 # Run the mini dashboard
-docker run -it --rm ram231006/sysdash:latest sysdash-mini
+sudo docker run -it --rm --pid=host --net=host ram231006/sysdash:latest sysdash-mini
 
-# Run with custom options
-docker run -it --rm ram231006/sysdash:latest sysdash --interval 0.5 --cpu-only
+# ⚠️ Note: Docker on Windows/macOS shows container metrics, not your actual system.
+# For accurate Windows/macOS monitoring, use pip install instead (Option 1 or 3).
+# Docker works perfectly on native Linux systems with sudo.
 ```
 
 ### Option 3: Clone and install locally
@@ -182,6 +183,11 @@ Disk C:\ 48% | Network: ↑125 KB/s ↓89 KB/s
 - rich 13.0.0+ (for sysdash only, not required for sysdash-mini)
 
 ## Troubleshooting
+
+**Permission denied errors on Linux?**
+- Run with sudo: `sudo sysdash` or `sudo sysdash-mini`
+- For Docker: `sudo docker run -it --rm --pid=host --net=host ram231006/sysdash:latest`
+- Some system metrics require elevated permissions
 
 **Graph not displaying? (sysdash)**
 - Wait 5-10 seconds for data collection
