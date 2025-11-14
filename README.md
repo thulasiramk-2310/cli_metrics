@@ -4,11 +4,28 @@ Real-time terminal-based system monitoring with beautiful graphs and customizabl
 
 ## Installation
 
+### Option 1: Install from PyPI (using pip)
 ```bash
-# Install from GitHub
 pip install git+https://github.com/thulasiramk-2310/cli_metrics.git
+```
 
-# Or clone and install locally
+### Option 2: Run with Docker
+```bash
+# Pull from Docker Hub
+docker pull ram231006/sysdash:latest
+
+# Run the graphical dashboard
+docker run -it --rm ram231006/sysdash:latest
+
+# Run the mini dashboard
+docker run -it --rm ram231006/sysdash:latest sysdash-mini
+
+# Run with custom options
+docker run -it --rm ram231006/sysdash:latest sysdash --interval 0.5 --cpu-only
+```
+
+### Option 3: Clone and install locally
+```bash
 git clone https://github.com/thulasiramk-2310/cli_metrics.git
 cd cli_metrics
 pip install -e .

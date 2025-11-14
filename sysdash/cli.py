@@ -141,17 +141,27 @@ class CLIDashboard:
     
     def create_header(self) -> Panel:
         """Create header panel"""
-        uptime = int(time.time() - self.start_time)
-        hours = uptime // 3600
-        minutes = (uptime % 3600) // 60
-        seconds = uptime % 60
+        # Get system uptime
+        import psutil
+        boot_time = psutil.boot_time()
+        system_uptime = int(time.time() - boot_time)
+        sys_hours = system_uptime // 3600
+        sys_minutes = (system_uptime % 3600) // 60
+        
+        # Get total CPU time (all processes)
+        cpu_times = psutil.cpu_times()
+        total_cpu_time = cpu_times.user + cpu_times.system
+        cpu_hours = int(total_cpu_time // 3600)
+        cpu_minutes = int((total_cpu_time % 3600) // 60)
         
         header_text = Text()
         header_text.append("SysDash CLI", style="bold cyan")
         header_text.append(" | ", style="dim")
         header_text.append(f"Host: {self.collector.hostname}", style="bold green")
         header_text.append(" | ", style="dim")
-        header_text.append(f"Uptime: {hours:02d}:{minutes:02d}:{seconds:02d}", style="yellow")
+        header_text.append(f"System: {sys_hours}h {sys_minutes}m", style="yellow")
+        header_text.append(" | ", style="dim")
+        header_text.append(f"CPU Time: {cpu_hours}h {cpu_minutes}m", style="magenta")
         header_text.append(" | ", style="dim")
         header_text.append(datetime.now().strftime("%Y-%m-%d %H:%M:%S"), style="blue")
         

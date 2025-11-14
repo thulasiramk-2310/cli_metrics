@@ -48,10 +48,21 @@ class MiniDashboard:
         self.clear_screen()
         
         # Header
-        uptime = int(time.time() - self.start_time)
+        import psutil
+        boot_time = psutil.boot_time()
+        system_uptime = int(time.time() - boot_time)
+        sys_hours = system_uptime // 3600
+        sys_minutes = (system_uptime % 3600) // 60
+        
+        # CPU time
+        cpu_times = psutil.cpu_times()
+        total_cpu_time = cpu_times.user + cpu_times.system
+        cpu_hours = int(total_cpu_time // 3600)
+        cpu_minutes = int((total_cpu_time % 3600) // 60)
+        
         print("=" * 80)
         print(f"  SYSDASH CLI MINI | {self.collector.hostname} | "
-              f"Uptime: {uptime}s | {datetime.now().strftime('%H:%M:%S')}")
+              f"System: {sys_hours}h {sys_minutes}m | CPU Time: {cpu_hours}h {cpu_minutes}m")
         print("=" * 80)
         print()
         
