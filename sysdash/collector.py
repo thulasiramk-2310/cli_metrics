@@ -1,8 +1,4 @@
-#!/usr/bin/env python3
-"""
-System Metrics Collector
-Collects real-time system metrics using psutil and sends to Go backend
-"""
+
 
 import psutil
 import json

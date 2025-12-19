@@ -1,30 +1,48 @@
 [build-system]
-requires = ["setuptools>=45", "wheel"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sysdash"
-version = "1.0.0"
+name = "sysdash-cli"
+version = "1.0.2"
 description = "Real-time terminal-based system monitoring dashboard with graphs"
 readme = "README.md"
 requires-python = ">=3.7"
-license = {text = "MIT"}
+license = { text = "MIT" }
+
 authors = [
-    {name = "THULASIRAM K", email = "kthulasiram231006@gmail.com"}
+  { name = "Thulasiram K", email = "kthulasiram231006@gmail.com" }
 ]
-keywords = ["monitoring", "dashboard", "system", "cpu", "memory", "terminal", "cli"]
+
+keywords = [
+  "monitoring",
+  "dashboard",
+  "system",
+  "cpu",
+  "memory",
+  "terminal",
+  "cli"
+]
+
 classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: System Administrators",
-    "Topic :: System :: Monitoring",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Intended Audience :: System Administrators",
+  "Topic :: System :: Monitoring",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent"
 ]
 
 dependencies = [
-    "psutil>=5.9.0",
-    "rich>=13.0.0",
+  "psutil>=5.9.0",
+  "rich>=13.0.0"
+]
+
+[project.optional-dependencies]
+backend = [
+  "requests>=2.0",
+  "websocket-client>=1.4.0"
 ]
 
 [project.scripts]
@@ -32,6 +50,10 @@ sysdash = "sysdash.cli:main"
 sysdash-mini = "sysdash.cli_mini:main"
 
 [project.urls]
-Homepage = "https://github.com/yourusername/sysdash"
-Repository = "https://github.com/yourusername/sysdash"
-Issues = "https://github.com/yourusername/sysdash/issues"
+Homepage = "https://github.com/thulasiramk-2310/cli_metrics"
+Repository = "https://github.com/thulasiramk-2310/cli_metrics"
+Issues = "https://github.com/thulasiramk-2310/cli_metrics/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sysdash*"]

@@ -2,8 +2,8 @@
 SysDash - Real-time terminal-based system monitoring dashboard
 """
 
-__version__ = "1.0.0"
-__author__ = "Your Name"
+__version__ = "1.0.2"
+__author__ = "TVH"
 __all__ = ["MetricsCollector", "CLIDashboard", "MiniDashboard"]
 
 from .collector import MetricsCollector

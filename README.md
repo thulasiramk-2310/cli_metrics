@@ -6,6 +6,8 @@ Real-time terminal-based system monitoring with beautiful graphs and customizabl
 
 ### Option 1: Install from PyPI (using pip)
 ```bash
+pip install sysdash-cli
+or
 pip install git+https://github.com/thulasiramk-2310/cli_metrics.git
 ```
 
