@@ -144,6 +144,17 @@ def make_metrics():
 
 
 @pytest.fixture
+def metrics_factory():
+    """Hand tests the metrics builder.
+
+    Exposed as a fixture rather than imported: tests/ has no __init__.py, so
+    "from tests.conftest import ..." only resolves when the repository root
+    happens to be on sys.path, which it is not under CI.
+    """
+    return make_metrics
+
+
+@pytest.fixture
 def make_dashboard():
     """Build a CLIDashboard wired to fixed metrics, with no background threads."""
     from sysdash.cli import CLIDashboard

@@ -362,12 +362,11 @@ def test_windows_swap_row_says_pagefile(make_dashboard, render, monkeypatch):
     assert "Pagefile" in text and "Swap" not in text
 
 
-def test_swap_row_hidden_when_there_is_no_swap(make_dashboard, render):
+def test_swap_row_hidden_when_there_is_no_swap(make_dashboard, render, metrics_factory):
     """Arch with zram or no swap reports 0; the row is then just noise."""
-    from tests.conftest import make_metrics
 
     def no_swap(**kwargs):
-        metrics = make_metrics()
+        metrics = metrics_factory()
         metrics["memory"]["swap"] = {"total": 0, "used": 0, "free": 0, "percent": 0.0}
         return metrics
 
