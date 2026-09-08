@@ -2,6 +2,12 @@
 
 Real-time terminal-based system monitoring with beautiful graphs and customizable views.
 
+![SysDash in action](docs/demo.svg)
+
+*Live CPU and memory trends, a per-core grid that re-flows with your terminal,
+and process selection with confirm-before-kill. Regenerate with
+`python3 scripts/make_demo_svg.py`.*
+
 ## Installation
 
 ### Option 1: Install from PyPI (using pip)

@@ -445,9 +445,11 @@ class CLIDashboard:
     def create_disk_panel(self, metrics: dict) -> Panel:
         """Create disk usage panel"""
         table = Table(show_header=True, box=box.SIMPLE_HEAD, padding=(0, 1))
-        table.add_column("Mount", style="cyan", width=12)
-        table.add_column("Used", justify="right", width=12)
-        table.add_column("Usage", width=20)
+        # no_wrap throughout: in the narrow right-hand column the usage bar
+        # otherwise folds its percentage onto a line of its own.
+        table.add_column("Mount", style="cyan", width=12, no_wrap=True)
+        table.add_column("Used", justify="right", width=12, no_wrap=True)
+        table.add_column("Usage", width=20, no_wrap=True)
         
         for partition in metrics['disk']['partitions'][:5]:  # Show first 5 partitions
             usage = partition['percent']
