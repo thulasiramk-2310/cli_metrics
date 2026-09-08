@@ -327,9 +327,11 @@ class CLIDashboard:
         """Create CPU and Memory metrics panel"""
         table = Table(show_header=False, box=box.SIMPLE, padding=(0, 1))
         table.add_column("Metric", style="cyan", width=15)
-        table.add_column("Value", justify="right")
-        table.add_column("Bar", width=30)
-        
+        # no_wrap: in a narrower terminal the value would otherwise fold onto a
+        # second line and push the core grid out of the panel.
+        table.add_column("Value", justify="right", no_wrap=True)
+        table.add_column("Bar", width=26, no_wrap=True)
+
         # Only show CPU if enabled
         if self.show_cpu:
             # CPU
@@ -653,7 +655,14 @@ class CLIDashboard:
                 "1": "show_cpu", "2": "show_memory", "3": "show_disk",
                 "4": "show_network", "5": "show_processes",
             }[key]
-            setattr(self, attribute, not getattr(self, attribute))
+            enabled = not getattr(self, attribute)
+            setattr(self, attribute, enabled)
+            # Say what happened: a panel silently vanishing reads as a bug.
+            label = {"1": "CPU", "2": "Memory", "3": "Disk", "4": "Network",
+                     "5": "Processes"}[key]
+            self._set_status(
+                f"{label} shown" if enabled else f"{label} hidden - press {key} to show"
+            )
             return True
 
         return False
