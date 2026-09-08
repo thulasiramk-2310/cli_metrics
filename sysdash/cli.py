@@ -4,7 +4,6 @@ SysDash CLI Dashboard
 Real-time terminal-based system monitoring using rich library
 """
 
-import math
 import os
 import platform
 import sys

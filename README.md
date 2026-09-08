@@ -58,6 +58,12 @@ Lightweight ASCII version - perfect for SSH sessions and basic terminals.
 - ✅ **Process Metrics**: Top processes by CPU and memory usage
 - ✅ **System Info**: Hostname, uptime, real-time updates
 
+### ⌨️ Interactive (sysdash only)
+- **Toggle panels live**: `1` CPU, `2` memory, `3` disk, `4` network, `5` processes
+- **Kill processes**: select with `↑`/`↓`, press `k`, then confirm
+- **Built-in help**: press `h` for the full key reference
+- **Quit**: `q`
+
 ### 📈 Visualizations (sysdash only)
 - **Real-time Line Graphs**: Smooth trend lines with color-coded indicators
   - 🔴 Red: CPU/Memory increasing (high load warning)
@@ -65,6 +71,9 @@ Lightweight ASCII version - perfect for SSH sessions and basic terminals.
 - **Progress Bars**: Visual usage indicators for all metrics
 - **Live Updates**: Configurable refresh intervals (0.1s - 10s)
 - **60-Second History**: Rolling graph showing usage trends
+- **Resizes with your terminal**: panels and the per-core grid re-flow as the
+  window changes, from 60 columns up to full screen
+- **Every core shown**: the grid wraps into as many columns as fit
 
 ### 🎨 Customizable Views
 - **Full Dashboard**: All metrics at once
@@ -121,6 +130,39 @@ sysdash --no-processes
 # CPU only with fast updates
 sysdash --cpu-only --interval 0.3
 ```
+
+## Keyboard Controls (sysdash)
+
+The dashboard is interactive — panel choices can be changed while it runs, so
+the `--*-only` and `--no-*` flags are only needed to set the starting view.
+
+| Key | Action |
+|-----|--------|
+| `h` `?` | Show or hide the help panel |
+| `1` | Toggle CPU metrics |
+| `2` | Toggle memory metrics |
+| `3` | Toggle disk metrics |
+| `4` | Toggle network metrics |
+| `5` | Toggle the process list |
+| `↑` `↓` | Move the selection in the process list |
+| `k` | Kill the selected process (asks for confirmation) |
+| `y` | Confirm: terminate (SIGTERM), letting the process clean up |
+| `K` | Confirm: force kill (SIGKILL), no cleanup |
+| `n` `Esc` | Cancel a pending kill |
+| `q` | Quit |
+
+Each key press is reported in the footer, so a panel toggling off is never
+silent.
+
+### Killing processes
+
+`k` never acts immediately — it stages the kill and waits for confirmation.
+System processes (PID 0/1/4, `System`, `systemd`, `init`, `launchd`) and
+sysdash's own process are refused outright.
+
+Killing a process owned by another user needs elevation: run with `sudo` on
+Linux or as Administrator on Windows. Without it the footer reports
+`Permission denied` rather than failing silently.
 
 ## Command-Line Arguments
 
@@ -192,15 +234,19 @@ Disk C:\ 48% | Network: ↑125 KB/s ↓89 KB/s
 - Some system metrics require elevated permissions
 
 **Graph not displaying? (sysdash)**
-- Wait 5-10 seconds for data collection
-- Graphs need at least 5 data points to render
+- Graphs need two data points, so give it a couple of update intervals
+- Press `1` or `2` to check CPU/memory panels have not been toggled off
 
 **Updates too slow/fast?**
 - Adjust with `--interval` (recommended: 0.5 - 2.0 seconds)
 
 **Terminal too small?**
-- Try `--cpu-only` or other single metric views
-- Use `sysdash-mini` for compact display
+- Panels re-flow automatically as you resize, down to about 60 columns
+- Below that, hide panels with `1`-`5` or use `sysdash-mini`
+
+**A panel disappeared?**
+- You most likely pressed its number key. The footer says which, and the same
+  key brings it back. Press `h` for the full list.
 
 **Colors not showing?**
 - Check if your terminal supports ANSI colors
@@ -209,6 +255,39 @@ Disk C:\ 48% | Network: ↑125 KB/s ↓89 KB/s
 **SSH/Remote connection issues?**
 - Use `sysdash-mini` for better compatibility
 - Some terminal emulators may not support Rich features
+
+## Development
+
+```bash
+git clone https://github.com/thulasiramk-2310/cli_metrics.git
+cd cli_metrics
+pip install -e ".[dev]"
+pytest
+```
+
+The suite renders the dashboard against fixed metrics and compares the output
+against snapshots in `tests/snapshots/`, so layout regressions fail loudly. If a
+render change is intentional, refresh them:
+
+```bash
+SYSDASH_UPDATE_SNAPSHOTS=1 pytest
+```
+
+Tests marked `real_psutil` use live readings instead of stubs; everything else
+is deterministic and runs in about two seconds. GitHub Actions runs the suite on
+Linux and Windows across Python 3.9, 3.11 and 3.13.
+
+### Reporting wrong readings
+
+If a metric looks wrong on your machine, `scripts/diagnose.py` prints what
+psutil reports next to `free -h`, `/proc/meminfo` and `df`, flags any
+inconsistency, and detects immutable or containerised systems:
+
+```bash
+python3 scripts/diagnose.py
+```
+
+Include its output in the issue.
 
 ## Contributing
 

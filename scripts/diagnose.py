@@ -73,7 +73,7 @@ def main():
 
     print(f"\n  psutil.swap_memory(): total={gb(swap.total)} used={gb(swap.used)} pct={swap.percent}")
     print(f"\n  $ free -h\n{sh('free -h')}")
-    print(f"\n  /proc/meminfo (key lines):")
+    print("\n  /proc/meminfo (key lines):")
     try:
         with open("/proc/meminfo") as fh:
             for line in fh:

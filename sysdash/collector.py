@@ -1,7 +1,6 @@
 
 
 import psutil
-import json
 import time
 import socket
 from datetime import datetime

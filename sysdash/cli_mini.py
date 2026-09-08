@@ -5,9 +5,7 @@ Simple, lightweight version without rich library
 """
 
 import time
-import sys
 import os
-from datetime import datetime
 from .collector import MetricsCollector, format_uptime
 
 
