@@ -5,8 +5,10 @@ Real-time terminal-based system monitoring using rich library
 """
 
 import math
+import os
 import platform
 import sys
+import threading
 import time
 from datetime import datetime
 from typing import Optional
@@ -22,6 +24,14 @@ from rich.text import Text
 from rich import box
 
 from .collector import MetricsCollector, format_uptime
+from .keys import DOWN, UP, key_reader
+
+# Killing these takes the machine down with them.
+PROTECTED_PIDS = frozenset({0, 1, 4})
+PROTECTED_NAMES = frozenset({
+    "System", "System Idle Process", "Registry", "Memory Compression",
+    "kernel_task", "systemd", "init", "launchd",
+})
 
 
 class TrendGraph:
@@ -139,12 +149,43 @@ class CLIDashboard:
         self.network_recv_history = []
         self.max_history = 60
 
-        # Enumerating every process costs ~2s and dominates a refresh, so it runs
-        # on its own slower cadence and the bars keep updating in between.
+        # Enumerating every process costs ~2s and would stall the input loop, so
+        # it runs on a background thread and the bars keep updating in between.
         self.process_interval = 3.0
-        self._last_process_sample = 0.0
         self._cached_processes = []
+        self._process_lock = threading.Lock()
+        self._sampler = None
+
+        # Interactive state
+        self.running = True
+        self.selected = 0
+        self.show_help = False
+        self.pending_kill = None
+        self.status = ""
+        self._status_expiry = 0.0
         
+    def _ensure_process_sampler(self):
+        """Start the background process sampler once, on first use."""
+        if self._sampler is not None:
+            return
+
+        def sample():
+            while self.running:
+                try:
+                    processes = self.collector.get_process_metrics(limit=30)
+                except psutil.Error:
+                    processes = []
+                with self._process_lock:
+                    self._cached_processes = processes
+                time.sleep(self.process_interval)
+
+        self._sampler = threading.Thread(target=sample, daemon=True)
+        self._sampler.start()
+
+    def _set_status(self, message: str, seconds: float = 4.0):
+        self.status = message
+        self._status_expiry = time.monotonic() + seconds
+
     def make_layout(self) -> Layout:
         """Create the dashboard layout"""
         layout = Layout(name="root")
@@ -229,15 +270,58 @@ class CLIDashboard:
         return Panel(header_text, style="bold white on blue", box=box.DOUBLE)
     
     def create_footer(self) -> Panel:
-        """Create footer panel"""
-        footer_text = Text()
-        footer_text.append("Press ", style="dim")
-        footer_text.append("Ctrl+C", style="bold red")
-        footer_text.append(" to exit", style="dim")
-        footer_text.append(" | ", style="dim")
-        footer_text.append(f"Update: {self.update_interval}s", style="dim")
-        
-        return Panel(footer_text, style="dim white on black")
+        """Create footer panel: hotkeys, or whatever needs saying right now."""
+        text = Text()
+
+        if self.pending_kill:
+            name, pid = self.pending_kill
+            text.append(f" Kill {name} ({pid})? ", style="bold white on red")
+            for key, label in (("y", " terminate  "), ("K", " force kill  "), ("n", " cancel")):
+                text.append(f"  {key}", style="bold")
+                text.append(label, style="dim")
+        elif self.status:
+            text.append(self.status, style="bold yellow")
+        else:
+            for key, label in (
+                ("h", "help"), ("1", "cpu"), ("2", "mem"), ("3", "disk"),
+                ("4", "net"), ("5", "proc"), ("↑↓", "select"),
+                ("k", "kill"), ("q", "quit"),
+            ):
+                text.append(f" {key}", style="bold cyan")
+                text.append(f" {label} ", style="dim")
+
+        return Panel(text, style="dim white on black")
+
+    def create_help_panel(self) -> Panel:
+        """Full-screen key reference, toggled with h."""
+        table = Table(show_header=False, box=None, padding=(0, 3))
+        table.add_column(style="bold cyan", justify="right")
+        table.add_column()
+        for key, description in (
+            ("h  ?", "Show or hide this help"),
+            ("1", "Toggle CPU metrics"),
+            ("2", "Toggle memory metrics"),
+            ("3", "Toggle disk metrics"),
+            ("4", "Toggle network metrics"),
+            ("5", "Toggle the process list"),
+            ("↑  ↓", "Move the selection in the process list"),
+            ("k", "Kill the selected process (asks first)"),
+            ("y", "Confirm: terminate, letting the process clean up"),
+            ("K", "Confirm: force kill, no cleanup"),
+            ("n  Esc", "Cancel a pending kill"),
+            ("q", "Quit"),
+        ):
+            table.add_row(key, description)
+
+        privilege = "Administrator" if os.name == "nt" else "sudo"
+        note = Text(
+            "\nKilling a process owned by another user needs " + privilege + ".",
+            style="dim",
+        )
+        return Panel(
+            Group(table, note), title="[bold]SysDash — Keys",
+            border_style="cyan", box=box.ROUNDED,
+        )
     
     def create_cpu_memory_panel(self, metrics: dict) -> Panel:
         """Create CPU and Memory metrics panel"""
@@ -415,17 +499,21 @@ class CLIDashboard:
         table.add_column("CPU", justify="right", width=8)
         table.add_column("Mem", justify="right", width=8)
         
-        for proc in metrics['processes'][:10]:
+        visible = metrics['processes'][:10]
+        for index, proc in enumerate(visible):
             cpu_color = self._get_color_for_value(proc['cpu'])
             mem_color = self._get_color_for_value(proc['memory'])
-            
+            # The selected row is what k acts on, so it has to be obvious.
+            row_style = "reverse bold" if index == self.selected else ""
+
             table.add_row(
                 str(proc['pid']),
                 proc['name'][:20],
                 f"[{cpu_color}]{proc['cpu']:.1f}%[/]",
-                f"[{mem_color}]{proc['memory']:.1f}%[/]"
+                f"[{mem_color}]{proc['memory']:.1f}%[/]",
+                style=row_style,
             )
-        
+
         return Panel(table, title="[bold]Top Processes", border_style="magenta", box=box.ROUNDED)
     
     def _get_color_for_value(self, value: float) -> str:
@@ -447,24 +535,23 @@ class CLIDashboard:
     
     def update_dashboard(self, layout: Layout):
         """Update all dashboard panels"""
-        now = time.monotonic()
-        sample_processes = (
-            self.show_processes
-            and now - self._last_process_sample >= self.process_interval
-        )
-        metrics = self.collector.collect_all(
-            per_nic=False, include_processes=sample_processes
-        )
+        if self.show_processes:
+            self._ensure_process_sampler()
+
+        # Processes come from the background sampler, never from this call --
+        # enumerating them inline would stall the loop for seconds at a time.
+        metrics = self.collector.collect_all(per_nic=False, include_processes=False)
 
         if not metrics:
             layout["header"].update(Panel("[red]Error collecting metrics[/]"))
             return
 
-        if sample_processes:
-            self._cached_processes = metrics["processes"]
-            self._last_process_sample = now
-        else:
-            metrics["processes"] = self._cached_processes
+        with self._process_lock:
+            metrics["processes"] = list(self._cached_processes)
+
+        self.selected = max(0, min(self.selected, len(metrics["processes"][:10]) - 1))
+        if self.status and time.monotonic() > self._status_expiry:
+            self.status = ""
 
         if self.show_cpu:
             self.cpu_history.append(metrics["cpu"]["total"])
@@ -491,21 +578,119 @@ class CLIDashboard:
         if self.show_processes:
             layout["processes"].update(self.create_processes_panel(metrics))
 
+    def _selected_process(self):
+        """The process the cursor is on, or None if the list is empty."""
+        with self._process_lock:
+            visible = self._cached_processes[:10]
+        if not visible or not 0 <= self.selected < len(visible):
+            return None
+        return visible[self.selected]
+
+    def _request_kill(self):
+        """Stage a kill for confirmation, refusing the ones that would hurt."""
+        proc = self._selected_process()
+        if proc is None:
+            self._set_status("No process selected")
+            return
+
+        pid, name = proc["pid"], proc["name"]
+        if pid in PROTECTED_PIDS or name in PROTECTED_NAMES:
+            self._set_status(f"Refusing to kill {name} ({pid}) - system process")
+        elif pid == os.getpid():
+            self._set_status("Refusing to kill sysdash itself - press q to quit")
+        else:
+            self.pending_kill = (name, pid)
+
+    def _confirm_kill(self, force: bool):
+        """Carry out the staged kill. terminate() unless force, which uses kill()."""
+        if not self.pending_kill:
+            return
+        name, pid = self.pending_kill
+        self.pending_kill = None
+
+        try:
+            proc = psutil.Process(pid)
+            if force:
+                proc.kill()
+            else:
+                proc.terminate()
+        except psutil.NoSuchProcess:
+            self._set_status(f"{name} ({pid}) had already exited")
+        except psutil.AccessDenied:
+            privilege = "Administrator" if os.name == "nt" else "sudo"
+            self._set_status(f"Permission denied for {name} ({pid}) - run as {privilege}")
+        except psutil.Error as exc:
+            self._set_status(f"Could not kill {name} ({pid}): {exc}")
+        else:
+            verb = "Force killed" if force else "Terminated"
+            self._set_status(f"{verb} {name} ({pid})")
+
+    def handle_key(self, key: str) -> bool:
+        """Act on a keypress. Returns True when the layout must be rebuilt."""
+        # A pending confirmation swallows every other key.
+        if self.pending_kill:
+            if key == "y":
+                self._confirm_kill(force=False)
+            elif key == "K":
+                self._confirm_kill(force=True)
+            else:
+                self.pending_kill = None
+                self._set_status("Kill cancelled")
+            return False
+
+        if key in ("q", "Q"):
+            self.running = False
+        elif key in ("h", "H", "?"):
+            self.show_help = not self.show_help
+        elif key == UP:
+            self.selected = max(0, self.selected - 1)
+        elif key == DOWN:
+            self.selected = min(9, self.selected + 1)
+        elif key in ("k", "K"):
+            self._request_kill()
+        elif key in "12345":
+            attribute = {
+                "1": "show_cpu", "2": "show_memory", "3": "show_disk",
+                "4": "show_network", "5": "show_processes",
+            }[key]
+            setattr(self, attribute, not getattr(self, attribute))
+            return True
+
+        return False
+
     def run(self):
         """Run the dashboard"""
         layout = self.make_layout()
-        
+        self.running = True
+
         try:
-            with Live(layout, console=self.console, screen=True, refresh_per_second=4) as live:
-                while True:
-                    self.update_dashboard(layout)
-                    time.sleep(self.update_interval)
-                    
+            with key_reader() as keys, Live(
+                layout, console=self.console, screen=True, refresh_per_second=8
+            ) as live:
+                next_refresh = 0.0
+                while self.running:
+                    now = time.monotonic()
+                    if now >= next_refresh:
+                        self.update_dashboard(layout)
+                        next_refresh = now + self.update_interval
+
+                    key = keys.get()
+                    if key is not None:
+                        if self.handle_key(key):
+                            layout = self.make_layout()
+                            self.update_dashboard(layout)
+                        live.update(self.create_help_panel() if self.show_help else layout)
+
+                    # Poll far faster than the refresh so keys feel immediate.
+                    time.sleep(0.02)
+
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Dashboard stopped by user[/]")
         except Exception as e:
             self.console.print(f"\n[red]Error: {e}[/]")
             raise
+        finally:
+            self.running = False
 
 
 def main():
