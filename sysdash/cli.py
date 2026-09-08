@@ -130,6 +130,46 @@ class TrendGraph:
             yield line
 
 
+class CoreGrid:
+    """Per-core usage bars, in as many columns as the panel is wide enough for.
+
+    Column count used to depend only on how many cores the CPU had, so a 16
+    thread machine kept four columns even in a 60 column terminal and every
+    cell was truncated to "0 ░░░░...". Deciding at render time means a
+    resize is handled without rebuilding anything.
+    """
+
+    def __init__(self, per_core: list, colour_for):
+        self.per_core = per_core
+        self.colour_for = colour_for
+
+    def __rich_console__(self, console, options):
+        width = options.max_width
+        # "15 " + bar + " 100%" plus a column of padding.
+        for columns in (4, 3, 2, 1):
+            bar_width = 8 if columns >= 3 else 10
+            if columns == 1 or columns * (bar_width + 9) <= width:
+                break
+
+        cells = []
+        for index, usage in enumerate(self.per_core):
+            colour = self.colour_for(usage)
+            filled = int(usage / 100 * bar_width)
+            bar = "█" * filled + "░" * (bar_width - filled)
+            cell = Text(no_wrap=True, overflow="crop")
+            cell.append(f"{index:>2} ", style="cyan")
+            cell.append(bar, style=colour)
+            cell.append(f" {usage:>3.0f}%")
+            cells.append(cell)
+
+        for start in range(0, len(cells), columns):
+            row = Text(no_wrap=True, overflow="crop")
+            for cell in cells[start:start + columns]:
+                row.append_text(cell)
+                row.append(" ")
+            yield row
+
+
 class CLIDashboard:
     """Terminal-based dashboard using rich"""
     
@@ -242,33 +282,16 @@ class CLIDashboard:
 
         return layout
 
-    @staticmethod
-    def _core_columns(count: int) -> int:
-        """Wrap the core grid so a many-thread CPU still fits a normal panel."""
-        if count > 12:
-            return 4
-        if count > 4:
-            return 2
-        return 1
+    # Share of the column each panel gets. Ratios rather than fixed heights:
+    # a fixed size cannot shrink, so on a short terminal the metrics panel used
+    # to eat over half the screen and leave the graph and process list empty.
+    SLOT_RATIOS = {"metrics": 3, "graph": 2, "processes": 2}
 
     def _make_slot(self, name: str) -> Layout:
-        """Give the metrics panel exactly the height its rows need.
-
-        Splitting the column evenly starved it: on a 16-thread CPU only two
-        cores fitted, and the graph was left with too little room to read.
-        """
-        # The graph needs a caption plus a few rows per series to read at all,
-        # so it gets a larger share than the process list.
-        if name == "graph":
-            return Layout(name=name, ratio=2)
-        if name != "metrics":
-            return Layout(name=name, ratio=1)
-
-        rows = (1 if self.show_cpu else 0) + (2 if self.show_memory else 0)
-        if self.show_cpu:
-            cores = psutil.cpu_count() or 1
-            rows += math.ceil(cores / self._core_columns(cores))
-        return Layout(name=name, size=rows + 4)
+        """Proportional slot, so every panel survives a resize."""
+        return Layout(
+            name=name, ratio=self.SLOT_RATIOS.get(name, 1), minimum_size=3
+        )
 
     def create_header(self, metrics: dict) -> Panel:
         """Create header panel"""
@@ -405,32 +428,9 @@ class CLIDashboard:
             Group(*body), title=f"[bold]{title_str}", border_style="green", box=box.ROUNDED
         )
 
-    def _create_core_grid(self, per_core: list) -> Table:
-        """Lay per-core usage out in columns, htop style.
-
-        One row per core overflows the panel on any machine with more than a
-        handful of threads, so wrap into columns instead of hiding cores.
-        """
-        columns = self._core_columns(len(per_core))
-        bar_width = 8 if columns >= 4 else 10
-        grid = Table.grid(padding=(0, 1))
-        for _ in range(columns):
-            grid.add_column(no_wrap=True)
-
-        cells = []
-        for index, usage in enumerate(per_core):
-            color = self._get_color_for_value(usage)
-            bar = self._create_bar(usage, 100, color, width=bar_width)
-            cells.append(f"[cyan]{index:>2}[/] {bar}")
-
-        # Pad the final row so the grid stays rectangular.
-        if len(cells) % columns:
-            cells.extend([""] * (columns - len(cells) % columns))
-
-        for start in range(0, len(cells), columns):
-            grid.add_row(*cells[start:start + columns])
-
-        return grid
+    def _create_core_grid(self, per_core: list) -> "CoreGrid":
+        """Per-core bars, wrapped into however many columns currently fit."""
+        return CoreGrid(per_core, self._get_color_for_value)
     
     def create_graph_panel(self, metrics: dict) -> Panel:
         """Create a dedicated panel for graphs"""

@@ -378,3 +378,53 @@ def test_swap_row_hidden_when_there_is_no_swap(make_dashboard, render):
     text = render(layout, width=200, height=34)
 
     assert "Swap" not in text and "Pagefile" not in text
+
+
+# --------------------------------------------------------------------------
+# Resizing
+#
+# Panels are proportional and the core grid picks its column count at render
+# time, so a terminal resize needs no rebuild. These pin that down.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "width, expected_columns", [(30, 1), (45, 2), (60, 3), (80, 4), (200, 4)]
+)
+def test_core_grid_columns_follow_width(render, width, expected_columns):
+    """A 16-thread CPU kept four columns at any width and truncated every cell."""
+    import re
+
+    from sysdash.cli import CoreGrid
+
+    grid = CoreGrid([float(n) for n in range(16)], lambda value: "green")
+    first_row = render(grid, width=width).splitlines()[0]
+
+    assert len(re.findall(r"\d+ [█░]+\s+\d+%", first_row)) == expected_columns
+
+
+@pytest.mark.parametrize(
+    "width, height", [(60, 20), (80, 24), (110, 32), (140, 45), (200, 60)]
+)
+def test_nothing_overflows_the_terminal(make_dashboard, render, width, height):
+    dashboard = make_dashboard()
+    layout = dashboard.make_layout()
+    dashboard.update_dashboard(layout)
+
+    for line in render(layout, width=width, height=height).splitlines():
+        assert len(line) <= width, f"line exceeds {width} columns: {line!r}"
+
+
+@pytest.mark.parametrize("width, height", [(80, 24), (110, 32), (200, 60)])
+def test_every_panel_keeps_content_when_the_terminal_shrinks(
+    make_dashboard, render, width, height
+):
+    """The metrics panel took a fixed 11 rows, starving the others on a short
+    terminal: the graph and process list rendered as empty boxes."""
+    dashboard = make_dashboard()
+    layout = dashboard.make_layout()
+    dashboard.update_dashboard(layout)
+    text = render(layout, width=width, height=height)
+
+    assert "CPU " in text, "metrics panel lost its content"
+    assert "Max:" in text, "graph panel rendered empty"
+    assert "PID" in text, "process panel rendered empty"
