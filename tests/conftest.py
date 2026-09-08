@@ -70,6 +70,12 @@ MEMORY_HISTORY = [70.0, 72.0, 75.0, 79.0, 84.0, 81.0, 77.0, 74.0, 72.0, 71.0] * 
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
+def _rich_version():
+    from importlib.metadata import version
+
+    return f"rich {version('rich')}"
+
+
 def make_metrics():
     """A complete metrics dict with stable values."""
     return {
@@ -143,6 +149,10 @@ def make_dashboard():
     from sysdash.cli import CLIDashboard
 
     def build(**flags):
+        # The header renders collector.hostname, which otherwise falls back to
+        # socket.gethostname() and bakes this machine's name into every
+        # snapshot. Pin it so they compare equal on any runner.
+        flags.setdefault("hostname", "testhost")
         dashboard = CLIDashboard(**flags)
         metrics = make_metrics()
 
@@ -196,8 +206,10 @@ def snapshot(request):
         with io.open(path, encoding="utf-8") as handle:
             expected = handle.read()
         assert text == expected, (
-            f"render changed for {name!r}. If intended, re-run with "
-            f"SYSDASH_UPDATE_SNAPSHOTS=1 and commit the snapshot."
+            f"render changed for {name!r}. Either the layout regressed, or rich "
+            f"changed how it draws (installed: {_rich_version()}). If the new "
+            f"output is correct, re-run with SYSDASH_UPDATE_SNAPSHOTS=1 and "
+            f"commit the snapshot."
         )
 
     return check
