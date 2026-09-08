@@ -175,3 +175,54 @@ def test_module_import_does_not_configure_root_logging():
 
     assert root_handlers == "0", "importing the collector must not call basicConfig"
     assert has_null_handler == "True"
+
+
+def test_constructor_takes_a_cpu_baseline(monkeypatch):
+    """The constructor must sample cpu_percent to establish a baseline.
+
+    get_cpu_metrics uses interval=None, which measures against the previous
+    call. psutil captures its own baseline at import, so a missing constructor
+    sample does not show up as a 0% reading -- it shows up as the first reading
+    being an average over however long ago psutil was imported, rather than a
+    fresh window. That is invisible to a value assertion, so the call itself is
+    what gets checked here.
+    """
+    calls = []
+    real_cpu_percent = psutil.cpu_percent
+
+    def spy(*args, **kwargs):
+        calls.append(kwargs)
+        return real_cpu_percent(*args, **kwargs)
+
+    monkeypatch.setattr(psutil, "cpu_percent", spy)
+    MetricsCollector()
+
+    assert any(
+        call.get("interval") is None and call.get("percpu") for call in calls
+    ), "constructor did not prime the per-core CPU baseline"
+
+
+@pytest.mark.real_psutil
+def test_real_construction_produces_a_plausible_reading():
+    """Integration smoke test over the path the rest of the suite stubs out.
+
+    Covers the real constructor, including the ~2s process priming, and checks
+    the readings that come back are shaped and scaled sensibly.
+    """
+    import time
+
+    collector = MetricsCollector()
+
+    # Give the sampler something real to measure.
+    deadline = time.time() + 0.4
+    while time.time() < deadline:
+        pass
+
+    metrics = collector.get_cpu_metrics()
+
+    assert len(metrics["per_core"]) == psutil.cpu_count()
+    assert all(0.0 <= core <= 100.0 for core in metrics["per_core"])
+    assert metrics["total"] == pytest.approx(
+        sum(metrics["per_core"]) / len(metrics["per_core"])
+    )
+    assert metrics["total"] > 0.0, "a busy loop should register as CPU usage"

@@ -26,6 +26,22 @@ from rich import box
 from .collector import MetricsCollector, format_uptime
 from .keys import DOWN, UP, key_reader
 
+
+def swap_label(system: str) -> str:
+    """What to call the swap row.
+
+    Windows reports the pagefile (commit limit minus physical RAM), which Task
+    Manager never calls swap. Takes the platform as an argument so both branches
+    are testable on either OS.
+    """
+    return "Pagefile" if system == "Windows" else "Swap"
+
+
+def privilege_name(os_name: str) -> str:
+    """The name of the elevation a user needs to kill someone else's process."""
+    return "Administrator" if os_name == "nt" else "sudo"
+
+
 # Killing these takes the machine down with them.
 PROTECTED_PIDS = frozenset({0, 1, 4})
 PROTECTED_NAMES = frozenset({
@@ -313,7 +329,7 @@ class CLIDashboard:
         ):
             table.add_row(key, description)
 
-        privilege = "Administrator" if os.name == "nt" else "sudo"
+        privilege = privilege_name(os.name)
         note = Text(
             "\nKilling a process owned by another user needs " + privilege + ".",
             style="dim",
@@ -369,7 +385,7 @@ class CLIDashboard:
                 swap_used_gb = swap['used'] / (1024**3)
                 swap_total_gb = swap['total'] / (1024**3)
                 table.add_row(
-                    "Pagefile" if platform.system() == "Windows" else "Swap",
+                    swap_label(platform.system()),
                     f"{swap_percent:.1f}% ({swap_used_gb:.1f}/{swap_total_gb:.1f} GB)",
                     swap_bar
                 )
@@ -619,7 +635,7 @@ class CLIDashboard:
         except psutil.NoSuchProcess:
             self._set_status(f"{name} ({pid}) had already exited")
         except psutil.AccessDenied:
-            privilege = "Administrator" if os.name == "nt" else "sudo"
+            privilege = privilege_name(os.name)
             self._set_status(f"Permission denied for {name} ({pid}) - run as {privilege}")
         except psutil.Error as exc:
             self._set_status(f"Could not kill {name} ({pid}): {exc}")

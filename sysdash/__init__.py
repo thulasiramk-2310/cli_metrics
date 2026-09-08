@@ -2,7 +2,7 @@
 SysDash - Real-time terminal-based system monitoring dashboard
 """
 
-__version__ = "1.0.6"
+__version__ = "1.1.0"
 __author__ = "Thulasiram K"
 __all__ = ["MetricsCollector", "CLIDashboard", "MiniDashboard", "format_uptime"]
 

@@ -15,13 +15,18 @@ from rich.console import Console
 
 
 @pytest.fixture(autouse=True)
-def no_process_priming(monkeypatch):
+def no_process_priming(request, monkeypatch):
     """Stop MetricsCollector walking every process on construction.
 
     The constructor primes psutil's per-process CPU counters, which costs about
     two seconds a call. Tests supply their own process lists, so it is dead
     weight that made the suite take a minute.
+
+    Tests marked ``real_psutil`` opt out, so the priming path itself stays
+    covered rather than being stubbed away everywhere.
     """
+    if "real_psutil" in request.keywords:
+        return
     monkeypatch.setattr(psutil, "process_iter", lambda *args, **kwargs: iter(()))
 
 
@@ -46,14 +51,17 @@ def frozen_clock(monkeypatch):
 def fixed_platform(monkeypatch):
     """Pin the platform so snapshots match on Windows and Linux CI alike.
 
-    The dashboard says "Pagefile" on Windows and "Swap" elsewhere, and names
-    Administrator or sudo in the help text, so an unpinned render would produce
-    two different snapshots for the same code.
+    The dashboard says "Pagefile" on Windows and "Swap" elsewhere, so an
+    unpinned render would produce two different snapshots for the same code.
+
+    Only platform.system is pinned here. os.name must be left alone: pathlib
+    reads it to choose PosixPath over WindowsPath, so patching it globally makes
+    any later path operation raise UnsupportedOperation on Windows. The help
+    panel's sudo/Administrator wording is pinned in its own test instead.
     """
     import sysdash.cli
 
     monkeypatch.setattr(sysdash.cli.platform, "system", lambda: "Linux")
-    monkeypatch.setattr(sysdash.cli.os, "name", "posix")
 
 # A history shape with a clear rise and fall, so a graph regression is visible.
 CPU_HISTORY = [5.0, 12.0, 30.0, 55.0, 80.0, 62.0, 41.0, 25.0, 14.0, 8.0] * 3

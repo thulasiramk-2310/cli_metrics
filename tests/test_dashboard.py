@@ -116,7 +116,12 @@ def test_all_cores_are_rendered(make_dashboard, render):
         assert f"{index:>2} " in text or f" {index} " in text
 
 
-def test_help_panel_snapshot(make_dashboard, render, snapshot):
+def test_help_panel_snapshot(make_dashboard, render, snapshot, monkeypatch):
+    """Pin the privilege wording here rather than globally: patching os.name
+    for the whole suite breaks pathlib on Windows."""
+    import sysdash.cli
+
+    monkeypatch.setattr(sysdash.cli, "privilege_name", lambda os_name: "sudo")
     dashboard = make_dashboard()
     snapshot("help_panel", render(dashboard.create_help_panel(), width=78, height=20))
 
@@ -315,3 +320,61 @@ def test_killing_a_dead_process_is_reported(make_dashboard, monkeypatch):
     dashboard.handle_key("y")
 
     assert "already exited" in dashboard.status
+
+
+# --------------------------------------------------------------------------
+# Platform-specific labels
+#
+# Snapshots are pinned to Linux for determinism, so these branches would
+# otherwise have no coverage on any CI leg. Calling the logic directly keeps
+# both branches tested on both platforms.
+# --------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    "system, expected",
+    [("Windows", "Pagefile"), ("Linux", "Swap"), ("Darwin", "Swap"), ("", "Swap")],
+)
+def test_swap_label_per_platform(system, expected):
+    from sysdash.cli import swap_label
+
+    assert swap_label(system) == expected
+
+
+@pytest.mark.parametrize(
+    "os_name, expected", [("nt", "Administrator"), ("posix", "sudo")]
+)
+def test_privilege_name_per_platform(os_name, expected):
+    from sysdash.cli import privilege_name
+
+    assert privilege_name(os_name) == expected
+
+
+def test_windows_swap_row_says_pagefile(make_dashboard, render, monkeypatch):
+    """The Windows branch end to end, forced on regardless of the host OS."""
+    import sysdash.cli
+
+    monkeypatch.setattr(sysdash.cli.platform, "system", lambda: "Windows")
+    dashboard = make_dashboard()
+    layout = dashboard.make_layout()
+    dashboard.update_dashboard(layout)
+    text = render(layout, width=200, height=34)
+
+    assert "Pagefile" in text and "Swap" not in text
+
+
+def test_swap_row_hidden_when_there_is_no_swap(make_dashboard, render):
+    """Arch with zram or no swap reports 0; the row is then just noise."""
+    from tests.conftest import make_metrics
+
+    def no_swap(**kwargs):
+        metrics = make_metrics()
+        metrics["memory"]["swap"] = {"total": 0, "used": 0, "free": 0, "percent": 0.0}
+        return metrics
+
+    dashboard = make_dashboard()
+    dashboard.collector.collect_all = no_swap
+    layout = dashboard.make_layout()
+    dashboard.update_dashboard(layout)
+    text = render(layout, width=200, height=34)
+
+    assert "Swap" not in text and "Pagefile" not in text
