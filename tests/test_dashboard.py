@@ -392,14 +392,19 @@ def test_swap_row_hidden_when_there_is_no_swap(make_dashboard, render):
 )
 def test_core_grid_columns_follow_width(render, width, expected_columns):
     """A 16-thread CPU kept four columns at any width and truncated every cell."""
+    import math
     import re
 
     from sysdash.cli import CoreGrid
 
-    grid = CoreGrid([float(n) for n in range(16)], lambda value: "green")
-    first_row = render(grid, width=width).splitlines()[0]
+    cores = 16
+    grid = CoreGrid([float(n) for n in range(cores)], lambda value: "green")
+    rows = [line for line in render(grid, width=width).splitlines() if line.strip()]
 
-    assert len(re.findall(r"\d+ [█░]+\s+\d+%", first_row)) == expected_columns
+    # Row count is the reliable signal: cells are cropped to the panel width, so
+    # counting cells in a row hides surplus columns instead of failing.
+    assert len(rows) == math.ceil(cores / expected_columns)
+    assert len(re.findall(r"\d+ [█░]+\s+\d+%", rows[0])) == expected_columns
 
 
 @pytest.mark.parametrize(
