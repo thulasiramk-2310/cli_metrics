@@ -6,7 +6,6 @@ WORKDIR /app
 
 # Copy package files
 COPY requirements.txt .
-COPY setup.py .
 COPY pyproject.toml .
 COPY README.md .
 COPY LICENSE .

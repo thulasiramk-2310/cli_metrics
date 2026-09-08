@@ -4,26 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysdash-cli"
-version = "1.0.2"
+version = "1.0.6"
 description = "Real-time terminal-based system monitoring dashboard with graphs"
 readme = "README.md"
 requires-python = ">=3.7"
 license = { text = "MIT" }
-
-authors = [
-  { name = "Thulasiram K", email = "kthulasiram231006@gmail.com" }
-]
-
-keywords = [
-  "monitoring",
-  "dashboard",
-  "system",
-  "cpu",
-  "memory",
-  "terminal",
-  "cli"
-]
-
+authors = [ { name = "Thulasiram K", email = "kthulasiram231006@gmail.com" } ]
+keywords = ["monitoring", "dashboard", "system", "cpu", "memory", "terminal", "cli"]
 classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
@@ -33,17 +20,13 @@ classifiers = [
   "Programming Language :: Python :: 3",
   "Operating System :: OS Independent"
 ]
-
 dependencies = [
   "psutil>=5.9.0",
   "rich>=13.0.0"
 ]
 
 [project.optional-dependencies]
-backend = [
-  "requests>=2.0",
-  "websocket-client>=1.4.0"
-]
+backend = ["requests>=2.0", "websocket-client>=1.4.0"]
 
 [project.scripts]
 sysdash = "sysdash.cli:main"

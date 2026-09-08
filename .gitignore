@@ -69,3 +69,8 @@ Thumbs.db
 
 # Project specific
 *.log
+
+# Agent/tooling artifacts (never commit)
+.claude/
+CLAUDE.md
+.code-review-graph/
