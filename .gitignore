@@ -74,3 +74,14 @@ Thumbs.db
 .claude/
 CLAUDE.md
 .code-review-graph/
+
+# Secrets and credentials - never commit these
+.env
+.env.*
+!.env.example
+.pypirc
+*.pem
+*.key
+credentials.json
+secrets.*
+token.txt
