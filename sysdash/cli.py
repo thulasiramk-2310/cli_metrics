@@ -25,40 +25,36 @@ from .collector import MetricsCollector, format_uptime
 
 
 class TrendGraph:
-    """A braille line graph that sizes itself to whatever space rich gives it.
+    """The original block line graph, sized to the space rich actually gives it.
 
-    The previous graph was hardcoded to 70x10 and drawn into whatever panel
-    height happened to be left over, so most of it was clipped away and the
-    rest was padding. Braille cells pack 2x4 dots per character, so the same
-    panel now carries eight times the detail.
+    The drawing style is unchanged -- a solid line over a dotted field, coloured
+    by trend, autoscaled between the window's own min and max. Only the sizing
+    differs: it was hardcoded to 70x10 and drawn into whatever panel height was
+    left over, so most of it was clipped away and the Memory series never
+    appeared at all.
     """
 
-    # Bit mask of each braille dot, indexed as _DOTS[column][row] in a 2x4 cell.
-    _DOTS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
-
-    def __init__(self, series: list, scale: float = 100.0):
+    def __init__(self, series: list):
         # series: [(label, data, colour), ...]
         self.series = series
-        self.scale = scale
 
     def __rich_console__(self, console, options):
         width = max(8, options.max_width)
         height = options.height or 12
         count = len(self.series) or 1
-        # Each series gets a caption line; the rest of the height is split evenly.
-        # A single braille row still resolves four levels, so in a short panel it
-        # is better to shrink every plot than to clip the last series away.
+        # One caption line per series; the rest of the height is split evenly.
+        # Floor of one row: in a short panel every series should still draw
+        # something rather than the last one silently disappearing.
         plot_height = max(1, (height - count) // count)
         budget = height
 
         for label, data, colour in self.series:
             if budget <= 1:
                 break
-            latest = data[-1] if data else 0.0
-            peak = max(data) if data else 0.0
+            low, high = min(data), max(data)
             caption = Text(no_wrap=True, overflow="crop")
             caption.append(f"{label} ", style=f"bold {colour}")
-            caption.append(f"now {latest:5.1f}%   peak {peak:5.1f}%", style="dim")
+            caption.append(f"Max: {high:.1f}%   Min: {low:.1f}%", style="dim")
             yield caption
             budget -= 1
             for line in self._plot(data, width, min(plot_height, budget)):
@@ -66,33 +62,46 @@ class TrendGraph:
                 budget -= 1
 
     def _plot(self, data: list, width: int, height: int):
-        """Render one series as braille rows, newest sample at the right edge."""
-        dot_width, dot_height = width * 2, height * 4
-        cells = [[0] * width for _ in range(height)]
+        """Draw one series, connecting samples with a solid line."""
+        low, high = min(data), max(data)
+        value_range = high - low if high != low else 1
+
+        grid = [[None] * width for _ in range(height)]
 
         previous = None
-        for x in range(dot_width):
-            index = len(data) - dot_width + x
-            if index < 0:
-                # Not enough history yet: leave the left of the graph empty
-                # rather than smearing the oldest sample across it.
-                continue
-            value = min(max(data[index], 0.0), self.scale)
-            y = int((1 - value / self.scale) * (dot_height - 1))
-            # Join to the previous column so steep changes stay a continuous line.
-            span = range(min(previous, y), max(previous, y) + 1) if previous is not None else (y,)
-            for fill in span:
-                cells[fill // 4][x // 2] |= self._DOTS[x % 2][fill % 4]
+        for x in range(width):
+            # Stretch a short history across the panel, subsample a long one.
+            step = len(data) / width if len(data) > width else 1
+            index = min(int(x * step), len(data) - 1)
+
+            y = int((1 - (data[index] - low) / value_range) * (height - 1))
+            y = max(0, min(height - 1, y))
+
+            if index == 0:
+                colour = "cyan"
+            elif data[index] > data[index - 1]:
+                colour = "red"       # climbing - higher load
+            elif data[index] < data[index - 1]:
+                colour = "green"     # falling - recovering
+            else:
+                colour = "yellow"
+
+            if previous is None:
+                grid[y][x] = colour
+            else:
+                # Join to the previous column so steep changes stay continuous.
+                for fill in range(min(previous, y), max(previous, y) + 1):
+                    grid[fill][x] = colour
             previous = y
 
-        for row, cell_row in enumerate(cells):
-            # Colour by height so a spike reads as red without extra work.
-            band = 1 - row / max(1, height - 1)
-            style = "red" if band > 0.75 else "yellow" if band > 0.5 else "green"
-            yield Text(
-                "".join(chr(0x2800 + cell) for cell in cell_row),
-                style=style, no_wrap=True, overflow="crop",
-            )
+        for row in grid:
+            line = Text(no_wrap=True, overflow="crop")
+            for colour in row:
+                if colour:
+                    line.append("█", style=colour)
+                else:
+                    line.append("·", style="dim")
+            yield line
 
 
 class CLIDashboard:
@@ -191,6 +200,10 @@ class CLIDashboard:
         Splitting the column evenly starved it: on a 16-thread CPU only two
         cores fitted, and the graph was left with too little room to read.
         """
+        # The graph needs a caption plus a few rows per series to read at all,
+        # so it gets a larger share than the process list.
+        if name == "graph":
+            return Layout(name=name, ratio=2)
         if name != "metrics":
             return Layout(name=name, ratio=1)
 

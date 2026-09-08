@@ -59,8 +59,9 @@ class MetricsCollector:
         self.last_net_time = now
         self.last_disk_time = now
 
-        # psutil reports 0.0% the first time a process is sampled, so prime the
-        # per-process counters here; the first render then has real values to sort by.
+        # Both CPU readings are deltas against the previous call, so take a
+        # baseline now; without it the first sample would read 0%.
+        psutil.cpu_percent(interval=None, percpu=True)
         for _ in psutil.process_iter(['cpu_percent']):
             pass
 
@@ -68,9 +69,10 @@ class MetricsCollector:
     
     def get_cpu_metrics(self) -> Dict:
         """Collect CPU metrics"""
-        # Sample once: a second cpu_percent(interval=...) call would block again
-        # and measure a different window, so the total would not match per_core.
-        per_core = psutil.cpu_percent(interval=0.1, percpu=True)
+        # interval=None measures since the previous call instead of sleeping, so
+        # a refresh no longer blocks for 100ms and the UI stays responsive to
+        # keypresses. Calls closer together than a few hundred ms read as noise.
+        per_core = psutil.cpu_percent(interval=None, percpu=True)
         cpu_freq = psutil.cpu_freq()
         cpu_count = psutil.cpu_count()
 
