@@ -27,6 +27,7 @@ dependencies = [
 
 [project.optional-dependencies]
 backend = ["requests>=2.0", "websocket-client>=1.4.0"]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
 sysdash = "sysdash.cli:main"
@@ -40,3 +41,6 @@ Issues = "https://github.com/thulasiramk-2310/cli_metrics/issues"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["sysdash*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

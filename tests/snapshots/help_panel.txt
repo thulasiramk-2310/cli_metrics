@@ -1,0 +1,16 @@
+╭────────────────────────────── SysDash — Keys ──────────────────────────────╮
+│      h  ?      Show or hide this help                                      │
+│         1      Toggle CPU metrics                                          │
+│         2      Toggle memory metrics                                       │
+│         3      Toggle disk metrics                                         │
+│         4      Toggle network metrics                                      │
+│         5      Toggle the process list                                     │
+│      ↑  ↓      Move the selection in the process list                      │
+│         k      Kill the selected process (asks first)                      │
+│         y      Confirm: terminate, letting the process clean up            │
+│         K      Confirm: force kill, no cleanup                             │
+│    n  Esc      Cancel a pending kill                                       │
+│         q      Quit                                                        │
+│                                                                            │
+│ Killing a process owned by another user needs sudo.                        │
+╰────────────────────────────────────────────────────────────────────────────╯
