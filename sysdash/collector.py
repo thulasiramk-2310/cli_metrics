@@ -238,16 +238,22 @@ class MetricsCollector:
             }
         }
     
-    def get_process_metrics(self, limit: int = 10) -> List[Dict]:
+    def get_process_metrics(self, limit: int = 10, include_username: bool = False) -> List[Dict]:
         """
         Collect top processes by CPU and memory usage
-        
+
         Args:
             limit: Number of top processes to return
+            include_username: Resolve the owning user. Off by default because it
+                opens a token per process (~360ms for 380 processes on Windows)
+                and neither dashboard renders it.
         """
+        attrs = ['pid', 'name', 'cpu_percent', 'memory_percent']
+        if include_username:
+            attrs.append('username')
+
         processes = []
-        
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'username']):
+        for proc in psutil.process_iter(attrs):
             try:
                 pinfo = proc.info
                 processes.append({
@@ -255,7 +261,7 @@ class MetricsCollector:
                     "name": pinfo['name'],
                     "cpu": pinfo['cpu_percent'] or 0,
                     "memory": pinfo['memory_percent'] or 0,
-                    "user": pinfo['username'] or "unknown"
+                    "user": pinfo.get('username') or "unknown"
                 })
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -281,7 +287,7 @@ class MetricsCollector:
             "timestamp": datetime.now().isoformat()
         }
     
-    def collect_all(self, per_nic: bool = True) -> Dict:
+    def collect_all(self, per_nic: bool = True, include_processes: bool = True) -> Dict:
         """Collect all metrics and return as JSON-serializable dict"""
         try:
             metrics = {
@@ -292,7 +298,7 @@ class MetricsCollector:
                 "disk": self.get_disk_metrics(),
                 "network": self.get_network_metrics(per_nic=per_nic),
                 "gpu": self.get_gpu_metrics(),
-                "processes": self.get_process_metrics(),
+                "processes": self.get_process_metrics() if include_processes else [],
                 "system": self.get_system_info()
             }
             

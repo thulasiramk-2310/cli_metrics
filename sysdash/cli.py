@@ -4,10 +4,14 @@ SysDash CLI Dashboard
 Real-time terminal-based system monitoring using rich library
 """
 
-import time
+import math
+import platform
 import sys
+import time
 from datetime import datetime
 from typing import Optional
+
+import psutil
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -18,6 +22,77 @@ from rich.text import Text
 from rich import box
 
 from .collector import MetricsCollector, format_uptime
+
+
+class TrendGraph:
+    """A braille line graph that sizes itself to whatever space rich gives it.
+
+    The previous graph was hardcoded to 70x10 and drawn into whatever panel
+    height happened to be left over, so most of it was clipped away and the
+    rest was padding. Braille cells pack 2x4 dots per character, so the same
+    panel now carries eight times the detail.
+    """
+
+    # Bit mask of each braille dot, indexed as _DOTS[column][row] in a 2x4 cell.
+    _DOTS = ((0x01, 0x02, 0x04, 0x40), (0x08, 0x10, 0x20, 0x80))
+
+    def __init__(self, series: list, scale: float = 100.0):
+        # series: [(label, data, colour), ...]
+        self.series = series
+        self.scale = scale
+
+    def __rich_console__(self, console, options):
+        width = max(8, options.max_width)
+        height = options.height or 12
+        count = len(self.series) or 1
+        # Each series gets a caption line; the rest of the height is split evenly.
+        # A single braille row still resolves four levels, so in a short panel it
+        # is better to shrink every plot than to clip the last series away.
+        plot_height = max(1, (height - count) // count)
+        budget = height
+
+        for label, data, colour in self.series:
+            if budget <= 1:
+                break
+            latest = data[-1] if data else 0.0
+            peak = max(data) if data else 0.0
+            caption = Text(no_wrap=True, overflow="crop")
+            caption.append(f"{label} ", style=f"bold {colour}")
+            caption.append(f"now {latest:5.1f}%   peak {peak:5.1f}%", style="dim")
+            yield caption
+            budget -= 1
+            for line in self._plot(data, width, min(plot_height, budget)):
+                yield line
+                budget -= 1
+
+    def _plot(self, data: list, width: int, height: int):
+        """Render one series as braille rows, newest sample at the right edge."""
+        dot_width, dot_height = width * 2, height * 4
+        cells = [[0] * width for _ in range(height)]
+
+        previous = None
+        for x in range(dot_width):
+            index = len(data) - dot_width + x
+            if index < 0:
+                # Not enough history yet: leave the left of the graph empty
+                # rather than smearing the oldest sample across it.
+                continue
+            value = min(max(data[index], 0.0), self.scale)
+            y = int((1 - value / self.scale) * (dot_height - 1))
+            # Join to the previous column so steep changes stay a continuous line.
+            span = range(min(previous, y), max(previous, y) + 1) if previous is not None else (y,)
+            for fill in span:
+                cells[fill // 4][x // 2] |= self._DOTS[x % 2][fill % 4]
+            previous = y
+
+        for row, cell_row in enumerate(cells):
+            # Colour by height so a spike reads as red without extra work.
+            band = 1 - row / max(1, height - 1)
+            style = "red" if band > 0.75 else "yellow" if band > 0.5 else "green"
+            yield Text(
+                "".join(chr(0x2800 + cell) for cell in cell_row),
+                style=style, no_wrap=True, overflow="crop",
+            )
 
 
 class CLIDashboard:
@@ -54,6 +129,12 @@ class CLIDashboard:
         self.network_sent_history = []
         self.network_recv_history = []
         self.max_history = 60
+
+        # Enumerating every process costs ~2s and dominates a refresh, so it runs
+        # on its own slower cadence and the bars keep updating in between.
+        self.process_interval = 3.0
+        self._last_process_sample = 0.0
+        self._cached_processes = []
         
     def make_layout(self) -> Layout:
         """Create the dashboard layout"""
@@ -87,13 +168,37 @@ class CLIDashboard:
                 Layout(name="left", ratio=2),
                 Layout(name="right", ratio=1),
             )
-            layout["left"].split(*[Layout(name=name) for name in left_sections])
-            layout["right"].split(*[Layout(name=name) for name in right_sections])
+            layout["left"].split(*[self._make_slot(name) for name in left_sections])
+            layout["right"].split(*[self._make_slot(name) for name in right_sections])
         else:
             sections = left_sections or right_sections
-            layout["main"].split(*[Layout(name=name) for name in sections])
+            layout["main"].split(*[self._make_slot(name) for name in sections])
 
         return layout
+
+    @staticmethod
+    def _core_columns(count: int) -> int:
+        """Wrap the core grid so a many-thread CPU still fits a normal panel."""
+        if count > 12:
+            return 4
+        if count > 4:
+            return 2
+        return 1
+
+    def _make_slot(self, name: str) -> Layout:
+        """Give the metrics panel exactly the height its rows need.
+
+        Splitting the column evenly starved it: on a 16-thread CPU only two
+        cores fitted, and the graph was left with too little room to read.
+        """
+        if name != "metrics":
+            return Layout(name=name, ratio=1)
+
+        rows = (1 if self.show_cpu else 0) + (2 if self.show_memory else 0)
+        if self.show_cpu:
+            cores = psutil.cpu_count() or 1
+            rows += math.ceil(cores / self._core_columns(cores))
+        return Layout(name=name, size=rows + 4)
 
     def create_header(self, metrics: dict) -> Panel:
         """Create header panel"""
@@ -154,17 +259,21 @@ class CLIDashboard:
                 mem_bar
             )
             
-            # Swap
-            swap_percent = metrics['memory']['swap']['percent']
-            swap_color = self._get_color_for_value(swap_percent)
-            swap_bar = self._create_bar(swap_percent, 100, swap_color)
-            swap_used_gb = metrics['memory']['swap']['used'] / (1024**3)
-            swap_total_gb = metrics['memory']['swap']['total'] / (1024**3)
-            table.add_row(
-                "Swap",
-                f"{swap_percent:.1f}% ({swap_used_gb:.1f}/{swap_total_gb:.1f} GB)",
-                swap_bar
-            )
+            # Swap. On Windows psutil reports the pagefile (commit limit minus
+            # physical RAM), which Task Manager never calls "swap"; and a machine
+            # with zram or no swap at all reports 0, where the row is just noise.
+            swap = metrics['memory']['swap']
+            if swap['total'] > 0:
+                swap_percent = swap['percent']
+                swap_color = self._get_color_for_value(swap_percent)
+                swap_bar = self._create_bar(swap_percent, 100, swap_color)
+                swap_used_gb = swap['used'] / (1024**3)
+                swap_total_gb = swap['total'] / (1024**3)
+                table.add_row(
+                    "Pagefile" if platform.system() == "Windows" else "Swap",
+                    f"{swap_percent:.1f}% ({swap_used_gb:.1f}/{swap_total_gb:.1f} GB)",
+                    swap_bar
+                )
         
         title = []
         if self.show_cpu:
@@ -187,15 +296,16 @@ class CLIDashboard:
         One row per core overflows the panel on any machine with more than a
         handful of threads, so wrap into columns instead of hiding cores.
         """
-        columns = 2 if len(per_core) > 8 else 1
-        grid = Table.grid(padding=(0, 2))
+        columns = self._core_columns(len(per_core))
+        bar_width = 8 if columns >= 4 else 10
+        grid = Table.grid(padding=(0, 1))
         for _ in range(columns):
             grid.add_column(no_wrap=True)
 
         cells = []
         for index, usage in enumerate(per_core):
             color = self._get_color_for_value(usage)
-            bar = self._create_bar(usage, 100, color, width=10)
+            bar = self._create_bar(usage, 100, color, width=bar_width)
             cells.append(f"[cyan]{index:>2}[/] {bar}")
 
         # Pad the final row so the grid stays rectangular.
@@ -209,29 +319,15 @@ class CLIDashboard:
     
     def create_graph_panel(self, metrics: dict) -> Panel:
         """Create a dedicated panel for graphs"""
-        table = Table(show_header=False, box=None, padding=(0, 1), expand=True)
-        table.add_column("Graph", style="white", no_wrap=False)
-        
-        # CPU graph
-        if self.show_cpu and len(self.cpu_history) > 5:
-            table.add_row(Text("📈 CPU Usage Trend", style="bold cyan"))
-            graph_lines = self._create_sparkline(self.cpu_history, width=70, height=10)
-            for line in graph_lines.split('\n'):
-                table.add_row(Text.from_markup(line))
-        
-        # Memory graph
-        if self.show_memory and len(self.memory_history) > 5:
-            table.add_row("")  # Spacer
-            table.add_row(Text("📊 Memory Usage Trend", style="bold magenta"))
-            graph_lines = self._create_sparkline(self.memory_history, width=70, height=10)
-            for line in graph_lines.split('\n'):
-                table.add_row(Text.from_markup(line))
-        
-        if table.row_count == 0:
-            return Panel("[dim]Collecting data for graphs...[/]", title="[bold]Usage Trends", border_style="yellow", box=box.ROUNDED)
-        
-        return Panel(table, title="[bold]Usage Trends", border_style="yellow", box=box.ROUNDED)
-    
+        series = []
+        if self.show_cpu and len(self.cpu_history) > 1:
+            series.append(("CPU", self.cpu_history, "cyan"))
+        if self.show_memory and len(self.memory_history) > 1:
+            series.append(("Memory", self.memory_history, "magenta"))
+
+        body = TrendGraph(series) if series else "[dim]Collecting data for graphs...[/]"
+        return Panel(body, title="[bold]Usage Trends", border_style="yellow", box=box.ROUNDED)
+
     def create_disk_panel(self, metrics: dict) -> Panel:
         """Create disk usage panel"""
         table = Table(show_header=True, box=box.SIMPLE_HEAD, padding=(0, 1))
@@ -330,102 +426,6 @@ class CLIDashboard:
         else:
             return "red"
     
-    def _create_sparkline(self, data: list, width: int = 60, height: int = 10) -> str:
-        """Create a smooth line graph like stock market charts"""
-        if not data or len(data) < 2:
-            return "No data"
-        
-        # Normalize data to height
-        max_val = max(data)
-        min_val = min(data)
-        value_range = max_val - min_val if max_val != min_val else 1
-        
-        # Create 2D grid
-        grid = [[' ' for _ in range(width)] for _ in range(height)]
-        colors = [[None for _ in range(width)] for _ in range(height)]
-        
-        # Plot points and connect them with lines
-        step = len(data) / width if len(data) > width else 1
-        prev_x, prev_y = None, None
-        
-        for i in range(width):
-            data_index = min(int(i * step), len(data) - 1)
-            value = data[data_index]
-            
-            # Normalize to 0-1 range
-            normalized = (value - min_val) / value_range
-            
-            # Convert to height position (inverted for display)
-            y = int((1 - normalized) * (height - 1))
-            y = max(0, min(height - 1, y))
-            
-            # Determine color based on trend (reversed: red for up, green for down)
-            if data_index > 0:
-                if data[data_index] > data[data_index - 1]:
-                    color = "red"  # Going up (higher usage - bad)
-                elif data[data_index] < data[data_index - 1]:
-                    color = "green"  # Going down (lower usage - good)
-                else:
-                    color = "yellow"  # Flat
-            else:
-                color = "cyan"
-            
-            # Draw line from previous point to current
-            if prev_x is not None:
-                # Bresenham's line algorithm for smooth lines
-                x0, y0 = prev_x, prev_y
-                x1, y1 = i, y
-                
-                dx = abs(x1 - x0)
-                dy = abs(y1 - y0)
-                sx = 1 if x0 < x1 else -1
-                sy = 1 if y0 < y1 else -1
-                err = dx - dy
-                
-                cx, cy = x0, y0
-                while True:
-                    if 0 <= cx < width and 0 <= cy < height:
-                        grid[cy][cx] = '█'
-                        colors[cy][cx] = color
-                    
-                    if cx == x1 and cy == y1:
-                        break
-                    
-                    e2 = 2 * err
-                    if e2 > -dy:
-                        err -= dy
-                        cx += sx
-                    if e2 < dx:
-                        err += dx
-                        cy += sy
-            else:
-                # First point
-                grid[y][i] = '█'
-                colors[y][i] = color
-            
-            prev_x, prev_y = i, y
-        
-        # Build output with colors
-        lines = []
-        for h in range(height):
-            line_chars = []
-            for w in range(width):
-                char = grid[h][w]
-                color = colors[h][w]
-                if char == '█' and color:
-                    line_chars.append(f"[{color}]{char}[/]")
-                elif char == ' ':
-                    line_chars.append(f"[dim]·[/]")
-                else:
-                    line_chars.append(char)
-            lines.append("".join(line_chars))
-        
-        # Add axis info
-        header = f"[bold]Max: {max_val:.1f}%[/]"
-        footer = f"[bold]Min: {min_val:.1f}%[/]"
-        
-        return header + "\n" + "\n".join(lines) + "\n" + footer
-    
     def _create_bar(self, value: float, max_value: float, color: str, width: int = 20) -> str:
         """Create a text-based progress bar"""
         filled = int((value / max_value) * width)
@@ -434,11 +434,24 @@ class CLIDashboard:
     
     def update_dashboard(self, layout: Layout):
         """Update all dashboard panels"""
-        metrics = self.collector.collect_all(per_nic=False)
+        now = time.monotonic()
+        sample_processes = (
+            self.show_processes
+            and now - self._last_process_sample >= self.process_interval
+        )
+        metrics = self.collector.collect_all(
+            per_nic=False, include_processes=sample_processes
+        )
 
         if not metrics:
             layout["header"].update(Panel("[red]Error collecting metrics[/]"))
             return
+
+        if sample_processes:
+            self._cached_processes = metrics["processes"]
+            self._last_process_sample = now
+        else:
+            metrics["processes"] = self._cached_processes
 
         if self.show_cpu:
             self.cpu_history.append(metrics["cpu"]["total"])
