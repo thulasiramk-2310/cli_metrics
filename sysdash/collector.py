@@ -15,12 +15,30 @@ try:
 except ImportError:
     HAS_REQUESTS = False
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+# A library must not configure the root logger -- that is the application's
+# job, and doing it here also writes INFO lines over the live dashboard.
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
+
+
+# Filesystems that duplicate real storage or report meaningless sizes. Without
+# this the disk panel on Linux fills up with snap/flatpak loop mounts, tmpfs and
+# the pseudo-filesystems, pushing the real partitions off the panel.
+PSEUDO_FSTYPES = frozenset({
+    "autofs", "binfmt_misc", "bpf", "cgroup", "cgroup2", "configfs", "debugfs",
+    "devpts", "devtmpfs", "efivarfs", "fusectl", "hugetlbfs", "mqueue", "proc",
+    "pstore", "ramfs", "securityfs", "squashfs", "sysfs", "tmpfs", "tracefs",
+})
+
+
+def format_uptime(seconds: float) -> str:
+    """Format uptime the way Windows Task Manager does (d:hh:mm:ss)."""
+    days, remainder = divmod(int(seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, secs = divmod(remainder, 60)
+    if days > 0:
+        return f"{days}:{hours:02d}:{minutes:02d}:{secs:02d}"
+    return f"{hours}:{minutes:02d}:{secs:02d}"
 
 
 class MetricsCollector:
@@ -34,21 +52,31 @@ class MetricsCollector:
             hostname: Custom hostname (defaults to system hostname)
         """
         self.hostname = hostname or socket.gethostname()
+
+        now = time.time()
         self.last_net_io = psutil.net_io_counters()
         self.last_disk_io = psutil.disk_io_counters()
-        self.last_time = time.time()
-        
+        self.last_net_time = now
+        self.last_disk_time = now
+
+        # psutil reports 0.0% the first time a process is sampled, so prime the
+        # per-process counters here; the first render then has real values to sort by.
+        for _ in psutil.process_iter(['cpu_percent']):
+            pass
+
         logger.info(f"Initialized MetricsCollector for host: {self.hostname}")
     
     def get_cpu_metrics(self) -> Dict:
         """Collect CPU metrics"""
-        cpu_percent = psutil.cpu_percent(interval=0.1, percpu=True)
+        # Sample once: a second cpu_percent(interval=...) call would block again
+        # and measure a different window, so the total would not match per_core.
+        per_core = psutil.cpu_percent(interval=0.1, percpu=True)
         cpu_freq = psutil.cpu_freq()
         cpu_count = psutil.cpu_count()
-        
+
         return {
-            "total": psutil.cpu_percent(interval=0.1),
-            "per_core": cpu_percent,
+            "total": sum(per_core) / len(per_core) if per_core else 0.0,
+            "per_core": per_core,
             "cores": cpu_count,
             "frequency": {
                 "current": cpu_freq.current if cpu_freq else 0,
@@ -80,24 +108,49 @@ class MetricsCollector:
     def get_disk_metrics(self) -> Dict:
         """Collect disk metrics"""
         current_time = time.time()
-        time_delta = current_time - self.last_time
+        time_delta = current_time - self.last_disk_time
         
         # Disk usage
         partitions = []
-        for partition in psutil.disk_partitions():
+        seen_devices = set()
+        for partition in psutil.disk_partitions(all=False):
+            fstype = (partition.fstype or "").lower()
+            is_root = partition.mountpoint == "/"
+
+            # The root filesystem is always kept, even when it is an overlay or
+            # composefs image as on immutable distros (ArkaOS, Silverblue) --
+            # otherwise the panel shows every partition except the one that matters.
+            if not is_root:
+                if fstype in PSEUDO_FSTYPES or fstype.startswith("fuse."):
+                    continue
+                # snap/flatpak loop mounts re-report storage already counted
+                if partition.device.startswith("/dev/loop"):
+                    continue
+                # bind mounts and subvolumes report the same device repeatedly
+                if partition.device in seen_devices:
+                    continue
+
             try:
                 usage = psutil.disk_usage(partition.mountpoint)
-                partitions.append({
-                    "device": partition.device,
-                    "mountpoint": partition.mountpoint,
-                    "fstype": partition.fstype,
-                    "total": usage.total,
-                    "used": usage.used,
-                    "free": usage.free,
-                    "percent": usage.percent
-                })
-            except PermissionError:
+            except OSError:
+                # Unreadable mount: no permission, or an empty optical/removable
+                # drive, which raises a plain OSError (WinError 21) on Windows.
                 continue
+
+            seen_devices.add(partition.device)
+            partitions.append({
+                "device": partition.device,
+                "mountpoint": partition.mountpoint,
+                "fstype": partition.fstype,
+                "total": usage.total,
+                "used": usage.used,
+                "free": usage.free,
+                "percent": usage.percent
+            })
+
+        # Root first, then largest: on a dual-boot box the Windows partition must
+        # never outrank "/" for the handful of slots the panel actually shows.
+        partitions.sort(key=lambda part: (part["mountpoint"] != "/", -part["total"]))
         
         # Disk I/O
         current_disk_io = psutil.disk_io_counters()
@@ -109,6 +162,7 @@ class MetricsCollector:
             write_rate = 0
         
         self.last_disk_io = current_disk_io
+        self.last_disk_time = current_time
         
         return {
             "partitions": partitions,
@@ -122,10 +176,10 @@ class MetricsCollector:
             }
         }
     
-    def get_network_metrics(self) -> Dict:
+    def get_network_metrics(self, per_nic: bool = True) -> Dict:
         """Collect network metrics"""
         current_time = time.time()
-        time_delta = current_time - self.last_time
+        time_delta = current_time - self.last_net_time
         
         current_net_io = psutil.net_io_counters()
         
@@ -138,21 +192,23 @@ class MetricsCollector:
             bytes_recv_rate = 0
         
         self.last_net_io = current_net_io
-        self.last_time = current_time
+        self.last_net_time = current_time
         
-        # Get per-interface stats
+        # Per-interface stats are only consumed by MetricsSender; the dashboards
+        # never render them, so let callers skip the work.
         interfaces = {}
-        for interface, stats in psutil.net_io_counters(pernic=True).items():
-            interfaces[interface] = {
-                "bytes_sent": stats.bytes_sent,
-                "bytes_recv": stats.bytes_recv,
-                "packets_sent": stats.packets_sent,
-                "packets_recv": stats.packets_recv,
-                "errin": stats.errin,
-                "errout": stats.errout,
-                "dropin": stats.dropin,
-                "dropout": stats.dropout
-            }
+        if per_nic:
+            for interface, stats in psutil.net_io_counters(pernic=True).items():
+                interfaces[interface] = {
+                    "bytes_sent": stats.bytes_sent,
+                    "bytes_recv": stats.bytes_recv,
+                    "packets_sent": stats.packets_sent,
+                    "packets_recv": stats.packets_recv,
+                    "errin": stats.errin,
+                    "errout": stats.errout,
+                    "dropin": stats.dropin,
+                    "dropout": stats.dropout
+                }
         
         return {
             "bytes_sent": current_net_io.bytes_sent,
@@ -225,7 +281,7 @@ class MetricsCollector:
             "timestamp": datetime.now().isoformat()
         }
     
-    def collect_all(self) -> Dict:
+    def collect_all(self, per_nic: bool = True) -> Dict:
         """Collect all metrics and return as JSON-serializable dict"""
         try:
             metrics = {
@@ -234,7 +290,7 @@ class MetricsCollector:
                 "cpu": self.get_cpu_metrics(),
                 "memory": self.get_memory_metrics(),
                 "disk": self.get_disk_metrics(),
-                "network": self.get_network_metrics(),
+                "network": self.get_network_metrics(per_nic=per_nic),
                 "gpu": self.get_gpu_metrics(),
                 "processes": self.get_process_metrics(),
                 "system": self.get_system_info()
@@ -244,7 +300,7 @@ class MetricsCollector:
                         f"Memory={metrics['memory']['percent']:.1f}%")
             
             return metrics
-        except Exception as e:
+        except (OSError, psutil.Error) as e:
             logger.error(f"Error collecting metrics: {e}")
             return {}
 
@@ -311,7 +367,7 @@ class MetricsSender:
                 timeout=self.timeout
             )
             return response.status_code == 200
-        except:
+        except requests.exceptions.RequestException:
             return False
 
 

@@ -8,7 +8,7 @@ import time
 import sys
 import os
 from datetime import datetime
-from .collector import MetricsCollector
+from .collector import MetricsCollector, format_uptime
 
 
 class MiniDashboard:
@@ -39,7 +39,7 @@ class MiniDashboard:
     
     def render(self):
         """Render the dashboard"""
-        metrics = self.collector.collect_all()
+        metrics = self.collector.collect_all(per_nic=False)
         
         if not metrics:
             print("Error collecting metrics")
@@ -47,22 +47,8 @@ class MiniDashboard:
         
         self.clear_screen()
         
-        # Header - System uptime like Task Manager
-        import psutil
-        boot_time = psutil.boot_time()
-        system_uptime = int(time.time() - boot_time)
-        
-        days = system_uptime // 86400
-        hours = (system_uptime % 86400) // 3600
-        minutes = (system_uptime % 3600) // 60
-        seconds = system_uptime % 60
-        
-        # Format like Task Manager
-        if days > 0:
-            uptime_str = f"{days}:{hours:02d}:{minutes:02d}:{seconds:02d}"
-        else:
-            uptime_str = f"{hours}:{minutes:02d}:{seconds:02d}"
-        
+        uptime_str = format_uptime(metrics['system']['uptime_seconds'])
+
         print("=" * 80)
         print(f"  SYSDASH CLI MINI | {self.collector.hostname} | "
               f"Up time: {uptime_str}")

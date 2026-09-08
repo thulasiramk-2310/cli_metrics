@@ -9,7 +9,7 @@ import sys
 from datetime import datetime
 from typing import Optional
 
-from rich.console import Console
+from rich.console import Console, Group
 from rich.live import Live
 from rich.layout import Layout
 from rich.panel import Panel
@@ -17,7 +17,7 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 
-from .collector import MetricsCollector
+from .collector import MetricsCollector, format_uptime
 
 
 class CLIDashboard:
@@ -55,108 +55,50 @@ class CLIDashboard:
         self.network_recv_history = []
         self.max_history = 60
         
-        # For candlestick: store OHLC (Open, High, Low, Close) data
-        self.cpu_candles = []  # Each item: {'open', 'high', 'low', 'close'}
-        self.memory_candles = []
-        self.candle_interval = 5  # Group every 5 data points into one candle
-        self.temp_cpu_values = []
-        self.temp_memory_values = []
-        
     def make_layout(self) -> Layout:
         """Create the dashboard layout"""
         layout = Layout(name="root")
-        
+
         layout.split(
             Layout(name="header", size=3),
             Layout(name="main", ratio=1),
             Layout(name="footer", size=3),
         )
-        
-        # Build dynamic layout based on what's enabled
-        sections = []
-        
-        # Add metrics section if CPU or memory is enabled
+
+        # Wide panels stack on the left, narrow ones on the right.
+        left_sections = []
         if self.show_cpu or self.show_memory:
-            sections.append("metrics")
-        
-        # Add right panel sections if disk or network is enabled
-        if self.show_disk:
-            sections.append("disk")
-        if self.show_network:
-            sections.append("network")
-            
-        # Add processes if enabled
+            left_sections.extend(["metrics", "graph"])
         if self.show_processes:
-            sections.append("processes")
-        
-        # Create layout based on enabled sections
-        if len(sections) == 0:
-            layout["main"].update(Panel("[yellow]No metrics selected. Use flags to enable metrics.[/]"))
-        elif len(sections) == 1:
-            # Single section - just use main layout with the section name
-            layout["main"]._name = sections[0]
-        elif len(sections) == 2:
-            layout["main"].split_row(
-                Layout(name=sections[0]),
-                Layout(name=sections[1]),
+            left_sections.append("processes")
+
+        right_sections = []
+        if self.show_disk:
+            right_sections.append("disk")
+        if self.show_network:
+            right_sections.append("network")
+
+        if not left_sections and not right_sections:
+            layout["main"].update(
+                Panel("[yellow]No metrics selected. Use flags to enable metrics.[/]")
             )
-        else:
-            # Complex layout with multiple sections
+        elif left_sections and right_sections:
             layout["main"].split_row(
                 Layout(name="left", ratio=2),
                 Layout(name="right", ratio=1),
             )
-            
-            left_sections = []
-            right_sections = []
-            
-            if "metrics" in sections:
-                left_sections.append("metrics")
-            if "processes" in sections:
-                left_sections.append("processes")
-            if "disk" in sections:
-                right_sections.append("disk")
-            if "network" in sections:
-                right_sections.append("network")
-            
-            # Add graph section to left
-            if self.show_cpu or self.show_memory:
-                left_sections.append("graph")
-            
-            if len(left_sections) == 1:
-                layout["left"].update(Layout(name=left_sections[0]))
-            elif len(left_sections) > 1:
-                layout["left"].split(
-                    *[Layout(name=name) for name in left_sections]
-                )
-            
-            if len(right_sections) == 1:
-                layout["right"].update(Layout(name=right_sections[0]))
-            elif len(right_sections) > 1:
-                layout["right"].split(
-                    *[Layout(name=name) for name in right_sections]
-                )
-        
-        return layout
-    
-    def create_header(self) -> Panel:
-        """Create header panel"""
-        # Get system uptime (matching Windows Task Manager)
-        import psutil
-        boot_time = psutil.boot_time()
-        system_uptime = int(time.time() - boot_time)
-        
-        days = system_uptime // 86400
-        hours = (system_uptime % 86400) // 3600
-        minutes = (system_uptime % 3600) // 60
-        seconds = system_uptime % 60
-        
-        # Format like Task Manager: d:hh:mm:ss or h:mm:ss
-        if days > 0:
-            uptime_str = f"{days}:{hours:02d}:{minutes:02d}:{seconds:02d}"
+            layout["left"].split(*[Layout(name=name) for name in left_sections])
+            layout["right"].split(*[Layout(name=name) for name in right_sections])
         else:
-            uptime_str = f"{hours}:{minutes:02d}:{seconds:02d}"
-        
+            sections = left_sections or right_sections
+            layout["main"].split(*[Layout(name=name) for name in sections])
+
+        return layout
+
+    def create_header(self, metrics: dict) -> Panel:
+        """Create header panel"""
+        uptime_str = format_uptime(metrics["system"]["uptime_seconds"])
+
         header_text = Text()
         header_text.append("SysDash CLI", style="bold cyan")
         header_text.append(" | ", style="dim")
@@ -224,27 +166,46 @@ class CLIDashboard:
                 swap_bar
             )
         
-        # CPU Cores (only if CPU is enabled)
-        if self.show_cpu:
-            table.add_row("", "", "")  # Spacer
-            table.add_row("[bold]CPU Cores", "", "")
-            for i, core_usage in enumerate(metrics['cpu']['per_core'][:8]):  # Show first 8 cores
-                core_color = self._get_color_for_value(core_usage)
-                core_bar = self._create_bar(core_usage, 100, core_color)
-                table.add_row(
-                    f"  Core {i}",
-                    f"{core_usage:.1f}%",
-                    core_bar
-                )
-        
         title = []
         if self.show_cpu:
             title.append("CPU")
         if self.show_memory:
             title.append("Memory")
         title_str = " & ".join(title) if title else "Metrics"
-        
-        return Panel(table, title=f"[bold]{title_str}", border_style="green", box=box.ROUNDED)
+
+        body = [table]
+        if self.show_cpu:
+            body.append(self._create_core_grid(metrics['cpu']['per_core']))
+
+        return Panel(
+            Group(*body), title=f"[bold]{title_str}", border_style="green", box=box.ROUNDED
+        )
+
+    def _create_core_grid(self, per_core: list) -> Table:
+        """Lay per-core usage out in columns, htop style.
+
+        One row per core overflows the panel on any machine with more than a
+        handful of threads, so wrap into columns instead of hiding cores.
+        """
+        columns = 2 if len(per_core) > 8 else 1
+        grid = Table.grid(padding=(0, 2))
+        for _ in range(columns):
+            grid.add_column(no_wrap=True)
+
+        cells = []
+        for index, usage in enumerate(per_core):
+            color = self._get_color_for_value(usage)
+            bar = self._create_bar(usage, 100, color, width=10)
+            cells.append(f"[cyan]{index:>2}[/] {bar}")
+
+        # Pad the final row so the grid stays rectangular.
+        if len(cells) % columns:
+            cells.extend([""] * (columns - len(cells) % columns))
+
+        for start in range(0, len(cells), columns):
+            grid.add_row(*cells[start:start + columns])
+
+        return grid
     
     def create_graph_panel(self, metrics: dict) -> Panel:
         """Create a dedicated panel for graphs"""
@@ -274,7 +235,7 @@ class CLIDashboard:
     def create_disk_panel(self, metrics: dict) -> Panel:
         """Create disk usage panel"""
         table = Table(show_header=True, box=box.SIMPLE_HEAD, padding=(0, 1))
-        table.add_column("Device", style="cyan", width=12)
+        table.add_column("Mount", style="cyan", width=12)
         table.add_column("Used", justify="right", width=12)
         table.add_column("Usage", width=20)
         
@@ -368,118 +329,6 @@ class CLIDashboard:
             return "orange3"
         else:
             return "red"
-    
-    def _create_candlestick_chart(self, candles: list, width: int = 70, height: int = 12) -> str:
-        """Create a candlestick chart like trading platforms"""
-        if not candles or len(candles) < 1:
-            return "[dim]Collecting data for candlestick chart...[/]"
-        
-        # Limit to last 5 candles for better visibility
-        candles = candles[-5:] if len(candles) > 5 else candles
-        
-        # Get all values for scaling
-        all_values = []
-        for c in candles:
-            all_values.extend([c['high'], c['low']])
-        
-        max_val = max(all_values)
-        min_val = min(all_values)
-        value_range = max_val - min_val if max_val != min_val else 1
-        
-        # Create 2D grid
-        grid = [[' ' for _ in range(width)] for _ in range(height)]
-        colors = [[None for _ in range(width)] for _ in range(height)]
-        
-        # Calculate positions for candles - center them with good spacing
-        candle_width = 8  # Fixed width for each candle body
-        total_spacing = width - (len(candles) * candle_width)
-        spacing = total_spacing // (len(candles) + 1) if len(candles) > 0 else 5
-        
-        # Draw each candle
-        for idx, candle in enumerate(candles):
-            x_start = spacing + idx * (candle_width + spacing)
-            x_center = x_start + candle_width // 2
-            
-            if x_start + candle_width >= width:
-                break
-            
-            open_val = candle['open']
-            close_val = candle['close']
-            high_val = candle['high']
-            low_val = candle['low']
-            
-            # Normalize positions (inverted for display)
-            open_y = int((1 - (open_val - min_val) / value_range) * (height - 1))
-            close_y = int((1 - (close_val - min_val) / value_range) * (height - 1))
-            high_y = int((1 - (high_val - min_val) / value_range) * (height - 1))
-            low_y = int((1 - (low_val - min_val) / value_range) * (height - 1))
-            
-            # Clamp values
-            open_y = max(0, min(height - 1, open_y))
-            close_y = max(0, min(height - 1, close_y))
-            high_y = max(0, min(height - 1, high_y))
-            low_y = max(0, min(height - 1, low_y))
-            
-            # Determine color: green if close > open (bullish), red if close < open (bearish)
-            is_bullish = close_val >= open_val
-            color = "green" if is_bullish else "red"
-            
-            # Draw upper wick (high to top of body)
-            body_top = min(open_y, close_y)
-            for y in range(high_y, body_top):
-                if 0 <= y < height:
-                    grid[y][x_center] = '│'
-                    colors[y][x_center] = color
-            
-            # Draw body (open to close)
-            body_bottom = max(open_y, close_y)
-            
-            # Ensure body has at least 1 pixel height
-            if body_top == body_bottom:
-                body_bottom = min(body_top + 1, height - 1)
-            
-            for y in range(body_top, body_bottom + 1):
-                if 0 <= y < height:
-                    for dx in range(candle_width):
-                        x = x_start + dx
-                        if x < width:
-                            grid[y][x] = '█'
-                            colors[y][x] = color
-            
-            # Draw lower wick (bottom of body to low)
-            for y in range(body_bottom + 1, low_y + 1):
-                if 0 <= y < height:
-                    grid[y][x_center] = '│'
-                    colors[y][x_center] = color
-        
-        # Build output with colors and Y-axis labels
-        lines = []
-        for h in range(height):
-            # Add Y-axis value label
-            y_value = min_val + (1 - h / (height - 1)) * value_range
-            y_label = f"{y_value:5.1f}% │ "
-            
-            line_chars = [y_label]
-            for w in range(width):
-                char = grid[h][w]
-                color = colors[h][w]
-                if char != ' ' and color:
-                    line_chars.append(f"[{color}]{char}[/]")
-                elif char == ' ':
-                    line_chars.append(f"[dim]·[/]")
-                else:
-                    line_chars.append(char)
-            lines.append("".join(line_chars))
-        
-        # Add X-axis
-        x_axis = "       └" + "─" * width
-        lines.append(x_axis)
-        
-        # Add legend with better formatting
-        legend = f"        [bold]Legend:[/] [green]█ Bullish (Up)[/] [dim]│[/] [red]█ Bearish (Down)[/] [dim]│[/] [dim]│ Wick (High/Low)[/]"
-        info = f"        [dim]Showing {len(candles)} candle{'s' if len(candles) > 1 else ''} | Range: {min_val:.1f}% - {max_val:.1f}%[/]"
-        
-        return "\n".join(lines) + "\n" + legend + "\n" + info
     
     def _create_sparkline(self, data: list, width: int = 60, height: int = 10) -> str:
         """Create a smooth line graph like stock market charts"""
@@ -585,108 +434,37 @@ class CLIDashboard:
     
     def update_dashboard(self, layout: Layout):
         """Update all dashboard panels"""
-        try:
-            metrics = self.collector.collect_all()
-            
-            if not metrics:
-                layout["header"].update(Panel("[red]Error collecting metrics[/]"))
-                return
-            
-            # Update history data
-            if self.show_cpu:
-                cpu_value = metrics['cpu']['total']
-                self.cpu_history.append(cpu_value)
-                if len(self.cpu_history) > self.max_history:
-                    self.cpu_history.pop(0)
-                
-                # Build candlestick data
-                self.temp_cpu_values.append(cpu_value)
-                if len(self.temp_cpu_values) >= self.candle_interval:
-                    # Create a new candle
-                    candle = {
-                        'open': self.temp_cpu_values[0],
-                        'high': max(self.temp_cpu_values),
-                        'low': min(self.temp_cpu_values),
-                        'close': self.temp_cpu_values[-1]
-                    }
-                    self.cpu_candles.append(candle)
-                    self.temp_cpu_values = []
-                    
-                    # Keep only last 20 candles
-                    if len(self.cpu_candles) > 20:
-                        self.cpu_candles.pop(0)
-            
-            if self.show_memory:
-                mem_value = metrics['memory']['percent']
-                self.memory_history.append(mem_value)
-                if len(self.memory_history) > self.max_history:
-                    self.memory_history.pop(0)
-                
-                # Build candlestick data
-                self.temp_memory_values.append(mem_value)
-                if len(self.temp_memory_values) >= self.candle_interval:
-                    candle = {
-                        'open': self.temp_memory_values[0],
-                        'high': max(self.temp_memory_values),
-                        'low': min(self.temp_memory_values),
-                        'close': self.temp_memory_values[-1]
-                    }
-                    self.memory_candles.append(candle)
-                    self.temp_memory_values = []
-                    
-                    if len(self.memory_candles) > 20:
-                        self.memory_candles.pop(0)
-            
-            layout["header"].update(self.create_header())
-            layout["footer"].update(self.create_footer())
-            
-            # Only update panels that are enabled
-            if self.show_cpu or self.show_memory:
-                try:
-                    layout["metrics"].update(self.create_cpu_memory_panel(metrics))
-                except KeyError:
-                    # If metrics section doesn't exist, try updating main directly
-                    try:
-                        layout["main"].update(self.create_cpu_memory_panel(metrics))
-                    except:
-                        pass
-                
-                # Update graph panel
-                try:
-                    layout["graph"].update(self.create_graph_panel(metrics))
-                except KeyError:
-                    pass
-                    
-            if self.show_disk:
-                try:
-                    layout["disk"].update(self.create_disk_panel(metrics))
-                except KeyError:
-                    try:
-                        layout["main"].update(self.create_disk_panel(metrics))
-                    except:
-                        pass
-                    
-            if self.show_network:
-                try:
-                    layout["network"].update(self.create_network_panel(metrics))
-                except KeyError:
-                    try:
-                        layout["main"].update(self.create_network_panel(metrics))
-                    except:
-                        pass
-                    
-            if self.show_processes:
-                try:
-                    layout["processes"].update(self.create_processes_panel(metrics))
-                except KeyError:
-                    try:
-                        layout["main"].update(self.create_processes_panel(metrics))
-                    except:
-                        pass
-            
-        except Exception as e:
-            layout["header"].update(Panel(f"[red]Error: {e}[/]"))
-    
+        metrics = self.collector.collect_all(per_nic=False)
+
+        if not metrics:
+            layout["header"].update(Panel("[red]Error collecting metrics[/]"))
+            return
+
+        if self.show_cpu:
+            self.cpu_history.append(metrics["cpu"]["total"])
+            if len(self.cpu_history) > self.max_history:
+                self.cpu_history.pop(0)
+
+        if self.show_memory:
+            self.memory_history.append(metrics["memory"]["percent"])
+            if len(self.memory_history) > self.max_history:
+                self.memory_history.pop(0)
+
+        layout["header"].update(self.create_header(metrics))
+        layout["footer"].update(self.create_footer())
+
+        # Every enabled panel has a named slot from make_layout, so these
+        # lookups cannot fail -- a KeyError here is a real bug worth surfacing.
+        if self.show_cpu or self.show_memory:
+            layout["metrics"].update(self.create_cpu_memory_panel(metrics))
+            layout["graph"].update(self.create_graph_panel(metrics))
+        if self.show_disk:
+            layout["disk"].update(self.create_disk_panel(metrics))
+        if self.show_network:
+            layout["network"].update(self.create_network_panel(metrics))
+        if self.show_processes:
+            layout["processes"].update(self.create_processes_panel(metrics))
+
     def run(self):
         """Run the dashboard"""
         layout = self.make_layout()
