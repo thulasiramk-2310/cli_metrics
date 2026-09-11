@@ -23,6 +23,7 @@ from rich.text import Text
 from rich import box
 
 from .collector import MetricsCollector, format_uptime
+from .glyphs import UNICODE_GLYPHS, enable_utf8, for_stream
 from .keys import DOWN, UP, key_reader
 
 
@@ -34,6 +35,21 @@ def swap_label(system: str) -> str:
     are testable on either OS.
     """
     return "Pagefile" if system == "Windows" else "Swap"
+
+
+def short_mountpoint(mountpoint: str, width: int = 12, ellipsis: str = "…") -> str:
+    """Shorten a mount path from the left, keeping the end that identifies it.
+
+    Linux mounts removable media at /run/media/<user>/<label> or
+    /media/<user>/<label>, so a plain truncation turned every external drive
+    into "/run/media/r" and three different disks became indistinguishable
+    rows. The label at the end is the part that says which disk this is, so
+    drop characters from the front instead and mark the cut with an ellipsis.
+    Windows never hit this: its mountpoints are "C:\\" and fit as they are.
+    """
+    if len(mountpoint) <= width:
+        return mountpoint
+    return ellipsis + mountpoint[-(width - 1):]
 
 
 def privilege_name(os_name: str) -> str:
@@ -59,9 +75,10 @@ class TrendGraph:
     appeared at all.
     """
 
-    def __init__(self, series: list):
+    def __init__(self, series: list, glyphs: dict = UNICODE_GLYPHS):
         # series: [(label, data, colour), ...]
         self.series = series
+        self.glyphs = glyphs
 
     def __rich_console__(self, console, options):
         width = max(8, options.max_width)
@@ -123,9 +140,9 @@ class TrendGraph:
             line = Text(no_wrap=True, overflow="crop")
             for colour in row:
                 if colour:
-                    line.append("█", style=colour)
+                    line.append(self.glyphs["full"], style=colour)
                 else:
-                    line.append("·", style="dim")
+                    line.append(self.glyphs["dot"], style="dim")
             yield line
 
 
@@ -138,9 +155,10 @@ class CoreGrid:
     resize is handled without rebuilding anything.
     """
 
-    def __init__(self, per_core: list, colour_for):
+    def __init__(self, per_core: list, colour_for, glyphs: dict = UNICODE_GLYPHS):
         self.per_core = per_core
         self.colour_for = colour_for
+        self.glyphs = glyphs
 
     def __rich_console__(self, console, options):
         width = options.max_width
@@ -154,7 +172,8 @@ class CoreGrid:
         for index, usage in enumerate(self.per_core):
             colour = self.colour_for(usage)
             filled = int(usage / 100 * bar_width)
-            bar = "█" * filled + "░" * (bar_width - filled)
+            bar = (self.glyphs["full"] * filled
+                   + self.glyphs["empty"] * (bar_width - filled))
             cell = Text(no_wrap=True, overflow="crop")
             cell.append(f"{index:>2} ", style="cyan")
             cell.append(bar, style=colour)
@@ -188,6 +207,10 @@ class CLIDashboard:
             show_processes: Show process list
         """
         self.console = Console()
+        # Chosen once from the stream we will print to: a terminal that
+        # cannot encode the block characters gets ASCII ones instead of a
+        # UnicodeEncodeError on the first frame.
+        self.glyphs = for_stream(self.console.file)
         self.collector = MetricsCollector(hostname=hostname)
         self.update_interval = update_interval
         self.start_time = time.time()
@@ -322,7 +345,8 @@ class CLIDashboard:
         else:
             for key, label in (
                 ("h", "help"), ("1", "cpu"), ("2", "mem"), ("3", "disk"),
-                ("4", "net"), ("5", "proc"), ("↑↓", "select"),
+                ("4", "net"), ("5", "proc"),
+                (self.glyphs["up"] + self.glyphs["down"], "select"),
                 ("k", "kill"), ("q", "quit"),
             ):
                 text.append(f" {key}", style="bold cyan")
@@ -342,7 +366,8 @@ class CLIDashboard:
             ("3", "Toggle disk metrics"),
             ("4", "Toggle network metrics"),
             ("5", "Toggle the process list"),
-            ("↑  ↓", "Move the selection in the process list"),
+            (self.glyphs["up"] + "  " + self.glyphs["down"],
+             "Move the selection in the process list"),
             ("k", "Kill the selected process (asks first)"),
             ("y", "Confirm: terminate, letting the process clean up"),
             ("K", "Confirm: force kill, no cleanup"),
@@ -429,7 +454,7 @@ class CLIDashboard:
 
     def _create_core_grid(self, per_core: list) -> "CoreGrid":
         """Per-core bars, wrapped into however many columns currently fit."""
-        return CoreGrid(per_core, self._get_color_for_value)
+        return CoreGrid(per_core, self._get_color_for_value, self.glyphs)
     
     def create_graph_panel(self, metrics: dict) -> Panel:
         """Create a dedicated panel for graphs"""
@@ -439,7 +464,8 @@ class CLIDashboard:
         if self.show_memory and len(self.memory_history) > 1:
             series.append(("Memory", self.memory_history, "magenta"))
 
-        body = TrendGraph(series) if series else "[dim]Collecting data for graphs...[/]"
+        body = (TrendGraph(series, self.glyphs) if series
+                else "[dim]Collecting data for graphs...[/]")
         return Panel(body, title="[bold]Usage Trends", border_style="yellow", box=box.ROUNDED)
 
     def create_disk_panel(self, metrics: dict) -> Panel:
@@ -460,7 +486,8 @@ class CLIDashboard:
             total_gb = partition['total'] / (1024**3)
             
             table.add_row(
-                partition['mountpoint'][:12],
+                short_mountpoint(partition['mountpoint'],
+                                 ellipsis=self.glyphs["ellipsis"]),
                 f"{used_gb:.0f}/{total_gb:.0f}GB",
                 bar
             )
@@ -549,7 +576,8 @@ class CLIDashboard:
     def _create_bar(self, value: float, max_value: float, color: str, width: int = 20) -> str:
         """Create a text-based progress bar"""
         filled = int((value / max_value) * width)
-        bar = "█" * filled + "░" * (width - filled)
+        bar = (self.glyphs["full"] * filled
+               + self.glyphs["empty"] * (width - filled))
         return f"[{color}]{bar}[/] {value:.0f}%"
     
     def update_dashboard(self, layout: Layout):
@@ -827,7 +855,11 @@ Examples:
     )
     
     args = parser.parse_args()
-    
+
+    # Before anything is drawn, and before the Console is built: an entry point
+    # may change stdout, library code may not.
+    enable_utf8()
+
     # Validate interval
     if args.interval < 0.1:
         print("Error: Interval must be at least 0.1 seconds")

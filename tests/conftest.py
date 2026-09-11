@@ -157,6 +157,7 @@ def metrics_factory():
 def make_dashboard():
     """Build a CLIDashboard wired to fixed metrics, with no background threads."""
     from sysdash.cli import CLIDashboard
+    from sysdash.glyphs import UNICODE_GLYPHS
 
     def build(**flags):
         # The header renders collector.hostname, which otherwise falls back to
@@ -165,6 +166,12 @@ def make_dashboard():
         flags.setdefault("hostname", "testhost")
         dashboard = CLIDashboard(**flags)
         metrics = make_metrics()
+
+        # Pin the glyph set. It is otherwise chosen from the ambient stdout, so
+        # a runner with no locale set would quietly swap every bar for ASCII
+        # and fail every snapshot for a reason that has nothing to do with the
+        # layout. The ASCII path has its own tests.
+        dashboard.glyphs = UNICODE_GLYPHS
 
         dashboard.collector.collect_all = lambda **kwargs: make_metrics()
         # A truthy sentinel makes _ensure_process_sampler a no-op, so no thread

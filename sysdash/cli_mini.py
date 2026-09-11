@@ -6,7 +6,9 @@ Simple, lightweight version without rich library
 
 import time
 import os
+import sys
 from .collector import MetricsCollector, format_uptime
+from .glyphs import UNICODE_GLYPHS, enable_utf8, for_stream
 
 
 class MiniDashboard:
@@ -17,6 +19,10 @@ class MiniDashboard:
     # clock and reuse it in between.
     process_interval = 3.0
 
+    # Class default so a bare instance still draws; __init__ picks the set
+    # the real stdout can encode.
+    glyphs = UNICODE_GLYPHS
+
     def __init__(self, hostname=None, interval=1.0):
         self.collector = MetricsCollector(hostname=hostname)
         self.interval = interval
@@ -24,6 +30,7 @@ class MiniDashboard:
         self._processes = []
         self._next_process_sample = 0.0
         self._vt_enabled = False
+        self.glyphs = for_stream(sys.stdout)
 
     def clear_screen(self):
         """Clear the terminal.
@@ -50,7 +57,8 @@ class MiniDashboard:
     def create_bar(self, value, max_value=100, width=40):
         """Create ASCII progress bar"""
         filled = int((value / max_value) * width)
-        bar = '█' * filled + '░' * (width - filled)
+        bar = (self.glyphs['full'] * filled
+               + self.glyphs['empty'] * (width - filled))
         return f"{bar} {value:.1f}%"
     
     def render(self):
@@ -87,7 +95,8 @@ class MiniDashboard:
         
         # Show first 4 cores
         for i, core in enumerate(metrics['cpu']['per_core'][:4]):
-            print(f"    Core {i}: {core:>5.1f}%  {'█' * int(core/5)}")
+            print(f"    Core {i}: {core:>5.1f}%  "
+                  f"{self.glyphs['full'] * int(core / 5)}")
         print()
         
         # Memory
@@ -156,7 +165,10 @@ def main():
     parser.add_argument("--hostname", type=str, default=None, help="Custom hostname")
     
     args = parser.parse_args()
-    
+
+    # An entry point may change stdout; the dashboard itself may not.
+    enable_utf8()
+
     dashboard = MiniDashboard(hostname=args.hostname, interval=args.interval)
     dashboard.run()
 

@@ -48,7 +48,11 @@ def main():
     print(f"  python        : {sys.version.split()[0]}")
     print(f"  psutil        : {psutil.__version__}")
     print(f"  kernel        : {sh('uname -r')}")
-    distro = sh('sh -c ". /etc/os-release 2>/dev/null && echo $PRETTY_NAME"')
+    # Single quotes inside: sh() already runs through a shell, and with double
+    # quotes that outer shell expanded $PRETTY_NAME itself -- to nothing --
+    # before the inner one ever sourced the file. Every report said "<no
+    # output>" for the one field that identifies the distro.
+    distro = sh("sh -c '. /etc/os-release 2>/dev/null && echo $PRETTY_NAME'")
     print(f"  distro        : {distro}")
     print(f"  container/imm : ostree={os.path.exists('/run/ostree-booted')} "
           f"composefs={os.path.exists('/run/composefs')} "

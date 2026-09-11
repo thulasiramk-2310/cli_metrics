@@ -7,6 +7,8 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import logging
 
+from .glyphs import enable_utf8, for_stream
+
 # Optional dependency for backend integration
 try:
     import requests
@@ -385,6 +387,11 @@ def run_collector(interval: int = 2, backend_url: str = "http://localhost:8080")
     """
     collector = MetricsCollector()
     sender = MetricsSender(backend_url)
+
+    # This runs headless, often in a container with LANG unset, where the
+    # arrows would raise UnicodeEncodeError on the first summary line.
+    arrows = for_stream()
+    up, down = arrows["up"], arrows["down"]
     
     logger.info(f"Starting metrics collection (interval: {interval}s)")
     logger.info(f"Backend URL: {backend_url}")
@@ -406,10 +413,10 @@ def run_collector(interval: int = 2, backend_url: str = "http://localhost:8080")
                 print(f"\r[{datetime.now().strftime('%H:%M:%S')}] "
                       f"CPU: {metrics['cpu']['total']:.1f}% | "
                       f"Memory: {metrics['memory']['percent']:.1f}% | "
-                      f"Disk I/O: ↑{metrics['disk']['io']['write_rate']/1024/1024:.2f}MB/s "
-                      f"↓{metrics['disk']['io']['read_rate']/1024/1024:.2f}MB/s | "
-                      f"Network: ↑{metrics['network']['bytes_sent_rate']/1024:.1f}KB/s "
-                      f"↓{metrics['network']['bytes_recv_rate']/1024:.1f}KB/s",
+                      f"Disk I/O: {up}{metrics['disk']['io']['write_rate']/1024/1024:.2f}MB/s "
+                      f"{down}{metrics['disk']['io']['read_rate']/1024/1024:.2f}MB/s | "
+                      f"Network: {up}{metrics['network']['bytes_sent_rate']/1024:.1f}KB/s "
+                      f"{down}{metrics['network']['bytes_recv_rate']/1024:.1f}KB/s",
                       end='', flush=True)
             
             # Wait for next interval
@@ -448,7 +455,9 @@ if __name__ == "__main__":
     )
     
     args = parser.parse_args()
-    
+
+    enable_utf8()
+
     if args.debug:
         logger.setLevel(logging.DEBUG)
     
