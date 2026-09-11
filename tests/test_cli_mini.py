@@ -92,13 +92,14 @@ def test_clear_screen_spawns_no_subprocess(monkeypatch):
     """It used to shell out to cls/clear on every single frame."""
     import sysdash.cli_mini as module
 
-    monkeypatch.setattr(module.os, "name", "posix")
     monkeypatch.setattr(
         module.os, "system", lambda cmd: pytest.fail("must not shell out")
     )
 
     dashboard = MiniDashboard.__new__(MiniDashboard)
     dashboard._vt_enabled = False
+    # Pinned on the instance, never on os.name itself: see the note there.
+    dashboard.os_name = "posix"
 
     buffer = io.StringIO()
     stdout, sys.stdout = sys.stdout, buffer
@@ -115,11 +116,11 @@ def test_windows_enables_virtual_terminal_once(monkeypatch):
     import sysdash.cli_mini as module
 
     calls = []
-    monkeypatch.setattr(module.os, "name", "nt")
     monkeypatch.setattr(module.os, "system", lambda cmd: calls.append(cmd))
 
     dashboard = MiniDashboard.__new__(MiniDashboard)
     dashboard._vt_enabled = False
+    dashboard.os_name = "nt"
 
     stdout, sys.stdout = sys.stdout, io.StringIO()
     try:

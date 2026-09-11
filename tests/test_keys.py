@@ -73,6 +73,7 @@ def _posix_reader(monkeypatch, chunks, ready):
     is waiting, then nothing is" and drive the escape-versus-arrow decision.
     """
     import select as select_module
+    import types
 
     from sysdash import keys as keys_module
 
@@ -82,9 +83,11 @@ def _posix_reader(monkeypatch, chunks, ready):
     pending_reads = list(chunks)
     pending_ready = list(ready)
 
-    monkeypatch.setattr(
-        keys_module.os, "read", lambda fd, n: pending_reads.pop(0)
-    )
+    # Swap the module's whole `os` reference for a stub rather than patching
+    # os.read itself. os.read is patched globally otherwise, and pytest's own
+    # capture machinery reads descriptors while the test runs.
+    stub_os = types.SimpleNamespace(read=lambda fd, n: pending_reads.pop(0))
+    monkeypatch.setattr(keys_module, "os", stub_os)
     monkeypatch.setattr(
         select_module,
         "select",

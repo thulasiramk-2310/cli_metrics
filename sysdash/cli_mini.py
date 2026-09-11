@@ -23,6 +23,12 @@ class MiniDashboard:
     # the real stdout can encode.
     glyphs = UNICODE_GLYPHS
 
+    # Read as an attribute rather than os.name directly, so a test can pin
+    # the platform on the instance. Patching os.name globally is what the
+    # conftest warns against: pathlib reads it to pick PosixPath over
+    # WindowsPath, and every later path operation then raises on Windows.
+    os_name = os.name
+
     def __init__(self, hostname=None, interval=1.0):
         self.collector = MetricsCollector(hostname=hostname)
         self.interval = interval
@@ -41,7 +47,7 @@ class MiniDashboard:
         os.system call first turns on virtual terminal processing, after which
         the escape works there too.
         """
-        if os.name == 'nt' and not self._vt_enabled:
+        if self.os_name == 'nt' and not self._vt_enabled:
             os.system('')
             self._vt_enabled = True
         print("\x1b[H\x1b[J", end="")
