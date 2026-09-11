@@ -221,23 +221,17 @@ class MetricsCollector:
             "interfaces": interfaces
         }
     
-    def get_gpu_metrics(self) -> Dict:
+    def get_gpu_metrics(self) -> Optional[Dict]:
+        """GPU metrics, which are not collected yet.
+
+        None rather than a dict of zeros: nothing here reads a GPU, and a
+        consumer cannot tell "no GPU support" from "an idle GPU at 0%" once the
+        zeros are recorded as if they were real readings.
+
+        To implement, plug in py3nvml (NVIDIA), pyadl (AMD) or GPUtil and return
+        usage, temperature and memory from it.
         """
-        Collect GPU metrics (placeholder)
-        For real GPU monitoring, integrate libraries like:
-        - py3nvml (NVIDIA)
-        - pyadl (AMD)
-        - GPUtil
-        """
-        return {
-            "usage": 0,
-            "temperature": 0,
-            "memory": {
-                "total": 0,
-                "used": 0,
-                "percent": 0
-            }
-        }
+        return None
     
     def get_process_metrics(self, limit: int = 10, include_username: bool = False) -> List[Dict]:
         """
@@ -362,7 +356,10 @@ class MetricsSender:
         except requests.exceptions.Timeout:
             logger.error(f"Request timeout after {self.timeout}s")
             return False
-        except Exception as e:
+        except requests.exceptions.RequestException as e:
+            # Narrower than a bare Exception: a TypeError from an unserialisable
+            # metrics dict is a bug here, not a transport failure to log and
+            # shrug off.
             logger.error(f"Error sending metrics: {e}")
             return False
     
@@ -420,8 +417,6 @@ def run_collector(interval: int = 2, backend_url: str = "http://localhost:8080")
             
     except KeyboardInterrupt:
         logger.info("\nStopping metrics collection...")
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
 
 
 if __name__ == "__main__":

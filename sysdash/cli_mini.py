@@ -12,14 +12,32 @@ from .collector import MetricsCollector, format_uptime
 class MiniDashboard:
     """Minimal terminal dashboard without external dependencies"""
     
+    # Enumerating every process costs ~2s, which would swamp a 1s refresh and
+    # leave the bars frozen while it ran. Sample the list on its own slower
+    # clock and reuse it in between.
+    process_interval = 3.0
+
     def __init__(self, hostname=None, interval=1.0):
         self.collector = MetricsCollector(hostname=hostname)
         self.interval = interval
         self.start_time = time.time()
-    
+        self._processes = []
+        self._next_process_sample = 0.0
+        self._vt_enabled = False
+
     def clear_screen(self):
-        """Clear terminal screen"""
-        os.system('cls' if os.name == 'nt' else 'clear')
+        """Clear the terminal.
+
+        An escape sequence rather than os.system('cls'/'clear'): that spawned a
+        process on every single frame. Homing the cursor before clearing also
+        stops the screen flashing between redraws. On Windows one no-op
+        os.system call first turns on virtual terminal processing, after which
+        the escape works there too.
+        """
+        if os.name == 'nt' and not self._vt_enabled:
+            os.system('')
+            self._vt_enabled = True
+        print("\x1b[H\x1b[J", end="")
     
     def format_bytes(self, bytes_value):
         """Format bytes to human readable"""
@@ -37,12 +55,20 @@ class MiniDashboard:
     
     def render(self):
         """Render the dashboard"""
-        metrics = self.collector.collect_all(per_nic=False)
-        
+        now = time.monotonic()
+        sample_processes = now >= self._next_process_sample
+        metrics = self.collector.collect_all(
+            per_nic=False, include_processes=sample_processes
+        )
+
         if not metrics:
             print("Error collecting metrics")
             return
-        
+
+        if sample_processes:
+            self._processes = metrics['processes']
+            self._next_process_sample = now + self.process_interval
+
         self.clear_screen()
         
         uptime_str = format_uptime(metrics['system']['uptime_seconds'])
@@ -98,7 +124,7 @@ class MiniDashboard:
         print("TOP PROCESSES:")
         print(f"  {'PID':<8} {'Name':<25} {'CPU%':<8} {'Memory%':<8}")
         print("  " + "-" * 50)
-        for proc in metrics['processes'][:5]:
+        for proc in self._processes[:5]:
             print(f"  {proc['pid']:<8} {proc['name']:<25} "
                   f"{proc['cpu']:<8.1f} {proc['memory']:<8.1f}")
         

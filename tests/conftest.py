@@ -126,8 +126,7 @@ def make_metrics():
             "packets_recv": 654321,
             "interfaces": {},
         },
-        "gpu": {"usage": 0, "temperature": 0,
-                "memory": {"total": 0, "used": 0, "percent": 0}},
+        "gpu": None,
         "processes": [
             {"pid": 1000 + n, "name": f"process-{n}.bin",
              "cpu": 50.0 - n * 4, "memory": 10.0 - n * 0.5, "user": "tester"}

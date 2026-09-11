@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sysdash-cli"
-version = "1.1.0"
+dynamic = ["version"]
 description = "Real-time terminal-based system monitoring dashboard with graphs"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [ { name = "Thulasiram K", email = "kthulasiram231006@gmail.com" } ]
 keywords = ["monitoring", "dashboard", "system", "cpu", "memory", "terminal", "cli"]
@@ -37,6 +37,11 @@ sysdash-mini = "sysdash.cli_mini:main"
 Homepage = "https://github.com/thulasiramk-2310/cli_metrics"
 Repository = "https://github.com/thulasiramk-2310/cli_metrics"
 Issues = "https://github.com/thulasiramk-2310/cli_metrics/issues"
+
+# Single-sourced from sysdash/__init__.py so a release cannot ship a wheel
+# whose metadata disagrees with what the package reports at runtime.
+[tool.setuptools.dynamic]
+version = { attr = "sysdash.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["."]

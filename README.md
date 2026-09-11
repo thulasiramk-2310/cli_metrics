@@ -228,7 +228,7 @@ Disk C:\ 48% | Network: ↑125 KB/s ↓89 KB/s
 
 ## Requirements
 
-- Python 3.7+
+- Python 3.9+
 - psutil 5.9.0+
 - rich 13.0.0+ (for sysdash only, not required for sysdash-mini)
 

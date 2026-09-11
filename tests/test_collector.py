@@ -154,6 +154,11 @@ def test_collect_all_can_skip_the_expensive_parts():
     assert set(metrics) >= {"cpu", "memory", "disk", "network", "processes", "system"}
 
 
+def test_gpu_metrics_are_absent_rather_than_zero():
+    """A dict of zeros could not be told apart from a real idle GPU reading."""
+    assert MetricsCollector.get_gpu_metrics(object.__new__(MetricsCollector)) is None
+
+
 def test_module_import_does_not_configure_root_logging():
     """A library hijacking the root logger writes over the live dashboard.
 

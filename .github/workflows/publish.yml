@@ -7,9 +7,9 @@ name: publish
 #   workflow    publish.yml
 #   environment release
 #
-# Cutting a release: bump the version in pyproject.toml and sysdash/__init__.py,
-# then publish a GitHub Release. Or run this workflow by hand from the Actions
-# tab to push whatever is currently on main.
+# Cutting a release: bump __version__ in sysdash/__init__.py -- pyproject.toml
+# reads it from there -- then publish a GitHub Release. Or run this workflow
+# by hand from the Actions tab to push whatever is currently on main.
 
 on:
   release:
